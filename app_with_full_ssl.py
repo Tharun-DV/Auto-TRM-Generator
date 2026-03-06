@@ -9,26 +9,14 @@ from datetime import datetime, timedelta
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk.web.client import WebClient
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
 PORTKEY_MODEL = os.environ.get("PORTKEY_MODEL", "pilot-poc/claude-sonnet-4-5")
-DEVOPS_HELP_CHANNEL_ID = os.environ.get("DEVOPS_HELP_CHANNEL_ID", "C0AKTULBYHW")
+DEVOPS_HELP_CHANNEL_ID = "C6P2C6938"
 
-# SSL Configuration - disable verification if behind corporate proxy
-# Set DISABLE_SSL_VERIFY=1 to disable SSL verification (not recommended for production)
-if os.environ.get("DISABLE_SSL_VERIFY") == "1":
-    print("⚠️  WARNING: Running with SSL verification disabled!")
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-else:
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
+ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 if not SLACK_BOT_TOKEN:
     print("Error: SLACK_BOT_TOKEN environment variable is not set.")
@@ -92,31 +80,7 @@ def fetch_slack_messages(client: WebClient, channel_id: str, oldest: float, late
 
 def parse_date_range(text: str):
     """Parse user input like 'Feb 25 to Mar 4 2026' or 'week 8' into Unix timestamps."""
-    text = text.strip().lower()
-    
-    # Handle "last week" - return full week range (Monday to Sunday)
-    if text in ['last week', 'lastweek', 'previous week']:
-        today = datetime.now()
-        # Get Monday of last week
-        days_since_monday = today.weekday()
-        last_monday = today - timedelta(days=days_since_monday + 7)
-        start_date = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Get Sunday of last week
-        end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59)
-        week_num = start_date.isocalendar()[1]
-        return start_date.timestamp(), end_date.timestamp(), start_date.strftime("%b %d"), end_date.strftime("%b %d"), week_num
-    
-    # Handle "this week" - return full week range (Monday to Sunday)
-    if text in ['this week', 'thisweek', 'current week']:
-        today = datetime.now()
-        # Get Monday of this week
-        days_since_monday = today.weekday()
-        this_monday = today - timedelta(days=days_since_monday)
-        start_date = this_monday.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Get Sunday of this week
-        end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59)
-        week_num = start_date.isocalendar()[1]
-        return start_date.timestamp(), end_date.timestamp(), start_date.strftime("%b %d"), end_date.strftime("%b %d"), week_num
+    text = text.strip()
     
     # Handle "week N" format
     week_match = re.match(r'week\s+(\d+)', text, re.IGNORECASE)
@@ -125,10 +89,6 @@ def parse_date_range(text: str):
         # Calculate week dates (assuming week 1 starts on Jan 1)
         year = datetime.now().year
         start_date = datetime(year, 1, 1) + timedelta(weeks=week_num - 1)
-        # Adjust to Monday if Jan 1 is not Monday
-        days_to_monday = (7 - start_date.weekday()) % 7
-        if start_date.weekday() != 0:  # If not Monday
-            start_date = start_date + timedelta(days=days_to_monday)
         end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59)
         return start_date.timestamp(), end_date.timestamp(), start_date.strftime("%b %d"), end_date.strftime("%b %d"), week_num
     
@@ -139,18 +99,16 @@ def parse_date_range(text: str):
         end_date = dateparser.parse(parts[1].strip())
         
         if start_date and end_date:
-            # Set start date to beginning of day
-            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
             # Set end date to end of day
-            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            end_date = end_date.replace(hour=23, minute=59, second=59)
             week_num = start_date.isocalendar()[1]
             return start_date.timestamp(), end_date.timestamp(), start_date.strftime("%b %d"), end_date.strftime("%b %d"), week_num
     
-    # Try to parse as a single date (for "yesterday", specific dates, etc.)
+    # Try to parse as a single date range
     parsed = dateparser.parse(text)
     if parsed:
-        start_date = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+        start_date = parsed
+        end_date = parsed.replace(hour=23, minute=59, second=59)
         week_num = start_date.isocalendar()[1]
         return start_date.timestamp(), end_date.timestamp(), start_date.strftime("%b %d"), end_date.strftime("%b %d"), week_num
     
@@ -241,14 +199,11 @@ Messages:
     }
     
     try:
-        # Disable SSL verification if requested (for corporate proxies)
-        verify_ssl = os.environ.get("DISABLE_SSL_VERIFY") != "1"
         response = requests.post(
             "https://api.portkey.ai/v1/chat/completions",
             json=body,
             headers=headers,
-            timeout=60,
-            verify=verify_ssl
+            timeout=60
         )
         response.raise_for_status()
         result = response.json()
@@ -258,65 +213,19 @@ Messages:
 
 
 @app.command("/trm")
-def handle_trm_command(ack, body, client):
-    """Handle /trm command - opens modal for week/date input."""
+def handle_trm_command(ack, body, command, client):
+    """Handle /trm command to generate TRM reports."""
     ack()
     
-    client.views_open(
-        trigger_id=body["trigger_id"],
-        view={
-            "type": "modal",
-            "callback_id": "trm_modal",
-            "title": {"type": "plain_text", "text": "TRM Report Generator"},
-            "submit": {"type": "plain_text", "text": "Generate Report"},
-            "close": {"type": "plain_text", "text": "Cancel"},
-            "blocks": [
-                {
-                    "type": "input",
-                    "block_id": "date_range_block",
-                    "element": {
-                        "type": "plain_text_input",
-                        "action_id": "date_range_input",
-                        "placeholder": {
-                            "type": "plain_text",
-                            "text": "e.g., week 8, Feb 25 to Mar 4 2026, last week"
-                        }
-                    },
-                    "label": {"type": "plain_text", "text": "Week or Date Range"}
-                },
-                {
-                    "type": "context",
-                    "elements": [
-                        {
-                            "type": "mrkdwn",
-                            "text": "*Examples:*\n• `week 8` - Week 8 of current year\n• `Feb 25 to Mar 4 2026` - Specific date range\n• `last week` - Previous week\n• `yesterday` - Yesterday only"
-                        }
-                    ]
-                }
-            ]
-        }
-    )
-
-
-@app.view("trm_modal")
-def handle_trm_modal_submission(ack, body, client, view):
-    """Handle TRM modal submission - generate and send report."""
-    # Extract the date range from the modal
-    date_range_text = view["state"]["values"]["date_range_block"]["date_range_input"]["value"]
-    user_id = body["user"]["id"]
+    text = command.get("text", "").strip()
+    user_id = body["user_id"]
     
-    # Acknowledge the modal submission immediately
-    ack()
-    
-    # Validate input
-    if not date_range_text or not date_range_text.strip():
+    if not text:
         client.chat_postMessage(
             channel=user_id,
-            text="❌ Please provide a date range.\n\nExamples:\n• `week 8`\n• `Feb 25 to Mar 4 2026`\n• `last week`"
+            text="❌ Please provide a date range.\n\nExamples:\n• `/trm week 8`\n• `/trm Feb 25 to Mar 4 2026`\n• `/trm last week`"
         )
         return
-    
-    text = date_range_text.strip()
     
     # Send acknowledgment message
     client.chat_postMessage(
@@ -365,13 +274,22 @@ def handle_trm_modal_submission(ack, body, client, view):
         )
 
 
+@app.view("trm_modal")
+def handle_trm_modal_submission(ack, body, client, view):
+    """Legacy modal handler - kept for backward compatibility."""
+    name = view["state"]["values"]["name_block"]["name_input"]["value"]
+    user_id = body["user"]["id"]
+    
+    ack()
+    
+    client.chat_postMessage(
+        channel=user_id,
+        text=f"Hello, {name}"
+    )
+
+
 if __name__ == "__main__":
     print("⚡️ Slack TRM Bot is starting...")
-    print(f"📁 Environment file loaded: .env")
-    print(f"📊 Configuration:")
-    print(f"   • Channel ID: {DEVOPS_HELP_CHANNEL_ID}")
-    print(f"   • AI Model: {PORTKEY_MODEL}")
-    print(f"   • SSL Verify: {'Disabled' if os.environ.get('DISABLE_SSL_VERIFY') == '1' else 'Enabled'}")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     print("✅ Bot is running! Use /trm in your Slack workspace.")
     handler.start()
