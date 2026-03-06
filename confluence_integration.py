@@ -89,38 +89,30 @@ class ConfluenceIntegration:
     def _build_confluence_content(self, metadata: Dict, data: Dict) -> str:
         """Build Confluence HTML content from TRM data."""
         
-        # Build issues table
+        # Build issues table - support dynamic themes
         issues_rows = ""
-        themes = {"Compute": [], "Infrasec": [], "Haproxy": [], "Latency": [], "Alerting": [], "Logging": []}
+        themes_dict = {}
         
         for issue in data["issues"]:
             theme = issue["theme"]
-            if theme in themes:
-                themes[theme].append(issue["description"])
+            if theme not in themes_dict:
+                themes_dict[theme] = []
+            themes_dict[theme].append(issue["description"])
         
-        for theme, descriptions in themes.items():
-            if descriptions:
-                issues_rows += f"<tr><td><strong>{theme}</strong></td><td>{'; '.join(descriptions)}</td></tr>"
-            else:
-                issues_rows += f"<tr><td><strong>{theme}</strong></td><td>None</td></tr>"
+        for theme, descriptions in sorted(themes_dict.items()):
+            issues_rows += f"<tr><td><strong>{theme}</strong></td><td>{'; '.join(descriptions)}</td></tr>"
         
-        # Build metrics table
+        if not issues_rows:
+            issues_rows = "<tr><td colspan='2'><em>No issues reported</em></td></tr>"
+        
+        # Build metrics table - new format with Last Week, Current Week, Delta
         metrics_rows = ""
         if data["metrics"]:
-            metrics = data["metrics"][0]
-            metrics_rows = f"""
-            <tr><td>1</td><td>P1 Alerts</td><td>{metrics['p1_alerts']}</td></tr>
-            <tr><td>2</td><td>Infra sec P0</td><td>{metrics['infrasec_p0']}</td></tr>
-            <tr><td>3</td><td>S1 RCAs</td><td>{metrics['s1_rcas']}</td></tr>
-            <tr><td>4</td><td>S2/S3 RCAs</td><td>{metrics['s23_rcas']}</td></tr>
-            """
+            for metric in data["metrics"]:
+                delta_text = metric.get('delta', '') or '-'
+                metrics_rows += f"<tr><td><strong>{metric['metric_name']}</strong></td><td>{metric['last_week']}</td><td>{metric['current_week']}</td><td>{delta_text}</td></tr>"
         else:
-            metrics_rows = """
-            <tr><td>1</td><td>P1 Alerts</td><td>0</td></tr>
-            <tr><td>2</td><td>Infra sec P0</td><td>0</td></tr>
-            <tr><td>3</td><td>S1 RCAs</td><td>0</td></tr>
-            <tr><td>4</td><td>S2/S3 RCAs</td><td>0</td></tr>
-            """
+            metrics_rows = "<tr><td colspan='4'><em>No metrics added</em></td></tr>"
         
         # Build alerts table
         alerts_rows = ""
@@ -156,11 +148,25 @@ class ConfluenceIntegration:
         
         # Complete HTML content
         html_content = f"""
-<h1>📋 ProdEngg TRM — Week {metadata['week_number']} | {metadata['date_range']}</h1>
+<h1>ProdEngg TRM — Week {metadata['week_number']} | {metadata['date_range']}</h1>
 <p><strong>DevOps Oncall:</strong> {metadata['oncall']}</p>
 <hr/>
 
-<h2>🔴 Issues</h2>
+<ac:structured-macro ac:name="toc" ac:schema-version="1">
+  <ac:parameter ac:name="printable">true</ac:parameter>
+  <ac:parameter ac:name="style">disc</ac:parameter>
+  <ac:parameter ac:name="maxLevel">2</ac:parameter>
+  <ac:parameter ac:name="minLevel">1</ac:parameter>
+  <ac:parameter ac:name="class">bigpink</ac:parameter>
+  <ac:parameter ac:name="exclude"></ac:parameter>
+  <ac:parameter ac:name="type">list</ac:parameter>
+  <ac:parameter ac:name="outline">false</ac:parameter>
+  <ac:parameter ac:name="include"></ac:parameter>
+</ac:structured-macro>
+
+<hr/>
+
+<h2>Issues</h2>
 <table>
 <tbody>
 <tr><th>Theme/Vertical</th><th>Description</th></tr>
@@ -168,15 +174,15 @@ class ConfluenceIntegration:
 </tbody>
 </table>
 
-<h2>📊 P0 Metrics</h2>
+<h2>Metrics</h2>
 <table>
 <tbody>
-<tr><th>#</th><th>Metric</th><th>Value</th></tr>
+<tr><th>Metric Name</th><th>Last Week</th><th>Current Week</th><th>Delta/Comments</th></tr>
 {metrics_rows}
 </tbody>
 </table>
 
-<h2>🚨 Alerts Summary</h2>
+<h2>Alerts Summary</h2>
 <table>
 <tbody>
 <tr><th>Component</th><th>Alert</th><th>Frequency</th><th>Description</th></tr>
@@ -184,7 +190,7 @@ class ConfluenceIntegration:
 </tbody>
 </table>
 
-<h2>💰 Cost Highlights</h2>
+<h2>Cost Highlights</h2>
 <table>
 <tbody>
 <tr><th>Resource</th><th>Last Week</th><th>This Week</th></tr>
@@ -192,7 +198,7 @@ class ConfluenceIntegration:
 </tbody>
 </table>
 
-<h2>🔥 Outages Summary</h2>
+<h2>Outages Summary</h2>
 <table>
 <tbody>
 <tr><th>Outage/RCA</th><th>Severity</th><th>Reason</th><th>Owner</th><th>Date</th></tr>
@@ -200,14 +206,14 @@ class ConfluenceIntegration:
 </tbody>
 </table>
 
-<h2>🎫 Ticket Data</h2>
+<h2>Ticket Data</h2>
 <ul>
 <li>Total Tickets: Not specified</li>
 <li>Date Range: {metadata['date_range']}</li>
 <li>Status: Closed: 0 | Blocked: 0 | Open: 0</li>
 </ul>
 
-<h2>✅ Action Items (TRM AIs)</h2>
+<h2>Action Items (TRM AIs)</h2>
 <table>
 <tbody>
 <tr><th>Description</th><th>Owner</th><th>ETA</th></tr>

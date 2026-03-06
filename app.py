@@ -552,11 +552,18 @@ def handle_add_issue_button(ack, body, client):
             "close": {"type": "plain_text", "text": "Back"},
             "blocks": [
                 {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Select a predefined theme or enter a custom one:*"
+                    }
+                },
+                {
                     "type": "input",
-                    "block_id": "theme_block",
+                    "block_id": "theme_select_block",
                     "element": {
                         "type": "static_select",
-                        "action_id": "theme_input",
+                        "action_id": "theme_select_input",
                         "placeholder": {"type": "plain_text", "text": "Select a theme"},
                         "options": [
                             {"text": {"type": "plain_text", "text": "Compute"}, "value": "Compute"},
@@ -564,10 +571,23 @@ def handle_add_issue_button(ack, body, client):
                             {"text": {"type": "plain_text", "text": "Haproxy"}, "value": "Haproxy"},
                             {"text": {"type": "plain_text", "text": "Latency"}, "value": "Latency"},
                             {"text": {"type": "plain_text", "text": "Alerting"}, "value": "Alerting"},
-                            {"text": {"type": "plain_text", "text": "Logging"}, "value": "Logging"}
+                            {"text": {"type": "plain_text", "text": "Logging"}, "value": "Logging"},
+                            {"text": {"type": "plain_text", "text": "Custom (enter below)"}, "value": "Custom"}
                         ]
                     },
-                    "label": {"type": "plain_text", "text": "Theme/Vertical"}
+                    "label": {"type": "plain_text", "text": "Theme/Vertical"},
+                    "optional": False
+                },
+                {
+                    "type": "input",
+                    "block_id": "custom_theme_block",
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "custom_theme_input",
+                        "placeholder": {"type": "plain_text", "text": "e.g., Networking, Security, Database..."}
+                    },
+                    "label": {"type": "plain_text", "text": "Custom Theme (if 'Custom' selected)"},
+                    "optional": True
                 },
                 {
                     "type": "input",
@@ -591,7 +611,19 @@ def handle_add_issue_modal_submission(ack, body, client):
     user_id = body["user"]["id"]
     values = body["view"]["state"]["values"]
     
-    theme = values["theme_block"]["theme_input"]["selected_option"]["value"]
+    # Get theme - either from dropdown or custom input
+    theme_selected = values["theme_select_block"]["theme_select_input"]["selected_option"]["value"]
+    custom_theme = values["custom_theme_block"]["custom_theme_input"].get("value", "").strip()
+    
+    # Use custom theme if "Custom" was selected and custom_theme is provided
+    if theme_selected == "Custom" and custom_theme:
+        theme = custom_theme
+    elif theme_selected == "Custom" and not custom_theme:
+        # If Custom selected but no custom theme provided, use "Custom" as theme
+        theme = "Other"
+    else:
+        theme = theme_selected
+    
     description = values["description_block"]["description_input"]["value"]
     
     # Save to session
@@ -996,7 +1028,7 @@ def handle_add_action_item_button(ack, body, client):
 
 @app.action("add_metric_button")
 def handle_add_metric_button(ack, body, client):
-    """Open modal to add a P0 metric - updates the current view."""
+    """Open modal to add a metric - updates the current view."""
     ack()
     # Use views.update instead of views.push to avoid stack limit
     client.views_update(
@@ -1004,49 +1036,58 @@ def handle_add_metric_button(ack, body, client):
         view={
             "type": "modal",
             "callback_id": "add_metric_modal",
-            "title": {"type": "plain_text", "text": "Add P0 Metric"},
+            "title": {"type": "plain_text", "text": "Add Metric"},
             "submit": {"type": "plain_text", "text": "Add Metric"},
             "close": {"type": "plain_text", "text": "Back"},
             "blocks": [
                 {
-                    "type": "input",
-                    "block_id": "p1_alerts_block",
-                    "element": {
-                        "type": "plain_text_input",
-                        "action_id": "p1_alerts_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., 5"}
-                    },
-                    "label": {"type": "plain_text", "text": "P1 Alerts"}
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Add a metric with week-over-week comparison:*"
+                    }
                 },
                 {
                     "type": "input",
-                    "block_id": "infrasec_p0_block",
+                    "block_id": "metric_name_block",
                     "element": {
                         "type": "plain_text_input",
-                        "action_id": "infrasec_p0_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., 2"}
+                        "action_id": "metric_name_input",
+                        "placeholder": {"type": "plain_text", "text": "e.g., P1 Alerts, Infrasec P0, S1 RCAs, API Latency..."}
                     },
-                    "label": {"type": "plain_text", "text": "Infrasec P0"}
+                    "label": {"type": "plain_text", "text": "Metric Name"}
                 },
                 {
                     "type": "input",
-                    "block_id": "s1_rcas_block",
+                    "block_id": "last_week_block",
                     "element": {
                         "type": "plain_text_input",
-                        "action_id": "s1_rcas_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., 1"}
+                        "action_id": "last_week_input",
+                        "placeholder": {"type": "plain_text", "text": "e.g., 5, 120ms, 95%"}
                     },
-                    "label": {"type": "plain_text", "text": "S1 RCAs"}
+                    "label": {"type": "plain_text", "text": "Last Week Value"}
                 },
                 {
                     "type": "input",
-                    "block_id": "s23_rcas_block",
+                    "block_id": "current_week_block",
                     "element": {
                         "type": "plain_text_input",
-                        "action_id": "s23_rcas_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., 3"}
+                        "action_id": "current_week_input",
+                        "placeholder": {"type": "plain_text", "text": "e.g., 8, 150ms, 92%"}
                     },
-                    "label": {"type": "plain_text", "text": "S2/S3 RCAs"}
+                    "label": {"type": "plain_text", "text": "Current Week Value"}
+                },
+                {
+                    "type": "input",
+                    "block_id": "delta_block",
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "delta_input",
+                        "multiline": True,
+                        "placeholder": {"type": "plain_text", "text": "e.g., +3 (↑60%), Increased due to new feature rollout"}
+                    },
+                    "label": {"type": "plain_text", "text": "Delta / Comments"},
+                    "optional": True
                 }
             ]
         }
@@ -1126,18 +1167,18 @@ def handle_add_metric_modal_submission(ack, body, client):
     user_id = body["user"]["id"]
     values = body["view"]["state"]["values"]
     
-    p1_alerts = values["p1_alerts_block"]["p1_alerts_input"]["value"]
-    infrasec_p0 = values["infrasec_p0_block"]["infrasec_p0_input"]["value"]
-    s1_rcas = values["s1_rcas_block"]["s1_rcas_input"]["value"]
-    s23_rcas = values["s23_rcas_block"]["s23_rcas_input"]["value"]
+    metric_name = values["metric_name_block"]["metric_name_input"]["value"]
+    last_week = values["last_week_block"]["last_week_input"]["value"]
+    current_week = values["current_week_block"]["current_week_input"]["value"]
+    delta = values["delta_block"]["delta_input"].get("value", "")
     
-    # Save to session (override existing since metrics are singular)
-    trm_session_data[user_id]["metrics"] = [{
-        "p1_alerts": p1_alerts,
-        "infrasec_p0": infrasec_p0,
-        "s1_rcas": s1_rcas,
-        "s23_rcas": s23_rcas
-    }]
+    # Save to session (append, allowing multiple metrics)
+    trm_session_data[user_id]["metrics"].append({
+        "metric_name": metric_name,
+        "last_week": last_week,
+        "current_week": current_week,
+        "delta": delta
+    })
     
     # Acknowledge and return to category selection
     ack(response_action="update", view=_build_category_selection_view(user_id, "✅ Updated P0 Metrics"))
@@ -1221,8 +1262,8 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
     """Handle final submission - generate and post TRM report."""
     user_id = body["user"]["id"]
     
-    # Acknowledge
-    ack()
+    # Acknowledge and close all modals
+    ack(response_action="clear")
     
     # Generate TRM report from session data
     if user_id not in trm_session_data:
@@ -1237,29 +1278,31 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
     
     # Build Issues section
     issues_section = ""
-    themes = {"Compute": [], "Infrasec": [], "Haproxy": [], "Latency": [], "Alerting": [], "Logging": []}
+    # Collect all unique themes from user's issues
+    themes_dict = {}
     
     for issue in data["issues"]:
         theme = issue["theme"]
-        if theme in themes:
-            themes[theme].append(issue["description"])
+        if theme not in themes_dict:
+            themes_dict[theme] = []
+        themes_dict[theme].append(issue["description"])
     
-    for theme, descriptions in themes.items():
-        if descriptions:
-            issues_section += f"| {theme} | {'; '.join(descriptions)} |\n"
-        else:
-            issues_section += f"| {theme} | None |\n"
+    # Generate issue rows
+    for theme, descriptions in sorted(themes_dict.items()):
+        issues_section += f"| {theme} | {'; '.join(descriptions)} |\n"
+    
+    # If no issues added, show empty table
+    if not issues_section:
+        issues_section = "| None | No issues reported |\n"
     
     # Build Metrics section
     metrics_section = ""
     if data["metrics"]:
-        metrics = data["metrics"][0]
-        metrics_section = f"""| 1 | P1 Alerts | {metrics['p1_alerts']} |
-| 2 | Infra sec P0 | {metrics['infrasec_p0']} |
-| 3 | S1 RCAs | {metrics['s1_rcas']} |
-| 4 | S2/S3 RCAs | {metrics['s23_rcas']} |"""
+        for metric in data["metrics"]:
+            delta_text = metric.get('delta', '') or ''
+            metrics_section += f"| {metric['metric_name']} | {metric['last_week']} | {metric['current_week']} | {delta_text} |\n"
     else:
-        metrics_section = "| 1 | P1 Alerts | 0 |\n| 2 | Infra sec P0 | 0 |\n| 3 | S1 RCAs | 0 |\n| 4 | S2/S3 RCAs | 0 |"
+        metrics_section = "| No metrics | - | - | - |\n"
     
     # Build Alerts section
     alerts_section = ""
@@ -1303,9 +1346,9 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
 |---|---|
 {issues_section.rstrip()}
 
-*📊 P0 Metrics*
-| # | Metric | Value |
-|---|---|---|
+*📊 Metrics*
+| Metric Name | Last Week | Current Week | Delta/Comments |
+|---|---|---|---|
 {metrics_section.rstrip()}
 
 *🚨 Alerts Summary*
