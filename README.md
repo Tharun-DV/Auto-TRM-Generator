@@ -5,6 +5,7 @@ An AI-powered Slack bot that generates Technical Review Meeting (TRM) reports fo
 ## Features
 
 - 📅 **Calendar Date Picker**: Interactive calendar UI to select date ranges
+- ✍️ **Manual Entry Mode**: Create TRM reports with custom data via `/trm-manual`
 - 🤖 **AI-Powered Summarization**: Uses Claude Sonnet 4.5 via Portkey AI
 - 📊 **Structured Reports**: Issues, Metrics, Alerts, Outages, Action Items
 - 💬 **Slack Integration**: Fetches messages and posts formatted reports
@@ -33,22 +34,34 @@ python app.py
 ```
 
 ### 4. Use in Slack
+
+#### Option A: Automatic TRM Generation (`/trm`)
 Type `/trm` in Slack - a modal will appear with calendar date pickers.
 
-**How to use:**
 1. Select **Start Date** from the calendar picker
 2. Select **End Date** from the calendar picker
 3. Click **Generate Report**
 
-The bot will fetch messages from #devops-help for the selected date range and generate a TRM report.
+The bot will fetch messages from #devops-help and generate an AI-powered TRM report.
+
+#### Option B: Manual TRM Entry (`/trm-manual`)
+Type `/trm-manual` in Slack - a modal will appear with input fields.
+
+1. Fill in **Week Number** (auto-filled with current week)
+2. Fill in **Date Range** (auto-filled with current week)
+3. Fill in **DevOps Oncall** name
+4. Optionally fill in Issues, Metrics, Alerts, Cost, Outages, Tickets, Action Items
+5. Click **Post TRM Report**
+
+The bot will format and post your custom TRM report. See [TRM_MANUAL_GUIDE.md](TRM_MANUAL_GUIDE.md) for details.
 
 ## Documentation
 
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Quick command reference
 - **[TRM_BOT_GUIDE.md](TRM_BOT_GUIDE.md)** - Comprehensive user guide
+- **[TRM_MANUAL_GUIDE.md](TRM_MANUAL_GUIDE.md)** - Manual TRM entry guide
 - **[MODEL_CONFIGURATION.md](MODEL_CONFIGURATION.md)** - AI model selection guide
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture & flow
-- **[UPGRADE_SUMMARY.md](UPGRADE_SUMMARY.md)** - What changed in the upgrade
 - **[SETUP.md](SETUP.md)** - Initial setup instructions
 - **[SLACK_APP_SETUP_GUIDE.md](SLACK_APP_SETUP_GUIDE.md)** - Slack app configuration
 
