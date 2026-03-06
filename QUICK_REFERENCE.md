@@ -20,27 +20,23 @@ python app.py
 ```
 /trm
 ```
-A modal will appear. Enter week or date range:
-- `week 8`
-- `Feb 25 to Mar 4 2026`
-- `last week`
-
-Then click "Generate Report"
+A modal will appear with calendar date pickers:
+1. Select **Start Date** from the calendar
+2. Select **End Date** from the calendar
+3. Click **Generate Report**
 
 ---
 
-## 📋 Input Examples
+## 📋 Usage Examples
 
-When the modal appears after typing `/trm`, you can enter:
+When the modal appears after typing `/trm`:
 
-| Input | Description |
+| Selection | Description |
 |---------|-------------|
-| `week 8` | Generate report for week 8 of current year |
-| `week 10` | Generate report for week 10 of current year |
-| `Feb 25 to Mar 4 2026` | Generate report for specific date range |
-| `last week` | Generate report for last week |
-| `yesterday` | Generate report for yesterday |
-| `March 1` | Generate report for March 1 |
+| Start: Mar 5, End: Mar 5 | Single day report (yesterday) |
+| Start: Mar 2, End: Mar 8 | Weekly report (Monday to Sunday) |
+| Start: Feb 25, End: Mar 4 | Custom date range report |
+| Start: Mar 1, End: Mar 1 | Specific single day |
 
 ---
 
@@ -109,10 +105,9 @@ Add these in your Slack App settings:
 - Re-install Slack app
 - Invite bot to #devops-help
 
-### "Could not parse date"
-- Use clearer format: "Feb 25 to Mar 4 2026"
-- Try "week 8" or "last week"
-- Check date is valid
+### "End date before start date"
+- Select end date that is same as or after start date
+- Use calendar pickers to visualize date range
 
 ---
 
@@ -141,10 +136,7 @@ Run the test suite:
 venv/bin/python test_bot.py
 ```
 
-Test with a small date range first:
-```
-/trm yesterday
-```
+Test with a small date range first by selecting yesterday for both start and end dates.
 
 ---
 
@@ -200,10 +192,11 @@ python app.py > bot.log 2>&1 &
 
 ## 🎯 Key Features
 
-✅ Flexible date parsing (week numbers, relative dates, ranges)  
+✅ Calendar date pickers for intuitive date selection  
 ✅ Automatic pagination (handles 200+ messages)  
 ✅ AI-powered categorization (Claude Sonnet 4.5)  
 ✅ Configurable AI model via PORTKEY_MODEL env var  
+✅ Date range validation (end date ≥ start date)  
 ✅ Error handling with helpful messages  
 ✅ Slack markdown formatting  
 ✅ Channel ID configurable  
