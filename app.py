@@ -63,6 +63,49 @@ app = App(client=client)
 trm_session_data = {}
 
 
+def format_user_mentions(user_ids):
+    """Convert list of user IDs to formatted mentions string."""
+    if not user_ids:
+        return ""
+    mentions = [f"<@{user_id}>" for user_id in user_ids]
+    return ", ".join(mentions)
+
+
+def get_user_names_from_ids(user_ids):
+    """Convert list of Slack user IDs to real names for Confluence."""
+    if not user_ids:
+        return ""
+    
+    names = []
+    for user_id in user_ids:
+        try:
+            print(f"🔍 Fetching user info for: {user_id}")
+            user_info = client.users_info(user=user_id)
+            
+            if user_info["ok"]:
+                user_data = user_info["user"]
+                # Try multiple fields to get the name
+                real_name = (
+                    user_data.get("real_name") or 
+                    user_data.get("profile", {}).get("real_name") or
+                    user_data.get("profile", {}).get("display_name") or 
+                    user_data.get("name") or
+                    user_id
+                )
+                print(f"✅ Found name: {real_name} for user {user_id}")
+                names.append(real_name)
+            else:
+                print(f"⚠️ Failed to fetch user info for {user_id}: {user_info}")
+                names.append(user_id)
+        except Exception as e:
+            print(f"❌ Error fetching user info for {user_id}: {e}")
+            names.append(user_id)
+    
+    result = ", ".join(names)
+    print(f"📋 Final names list: {result}")
+    return result
+
+
 def fetch_slack_messages(client: WebClient, channel_id: str, oldest: float, latest: float):
     """Fetch all messages from a Slack channel within a time range."""
     messages = []
@@ -389,22 +432,33 @@ def handle_trm_manual_command(ack, body, client):
                 },
                 {
                     "type": "input",
-                    "block_id": "date_range_block",
+                    "block_id": "start_date_block",
                     "element": {
-                        "type": "plain_text_input",
-                        "action_id": "date_range_input",
-                        "initial_value": f"{monday.strftime('%b %d')} to {sunday.strftime('%b %d')}",
-                        "placeholder": {"type": "plain_text", "text": "e.g., Mar 2 to Mar 8"}
+                        "type": "datepicker",
+                        "action_id": "start_date_input",
+                        "initial_date": monday.strftime('%Y-%m-%d'),
+                        "placeholder": {"type": "plain_text", "text": "Select start date"}
                     },
-                    "label": {"type": "plain_text", "text": "Date Range"}
+                    "label": {"type": "plain_text", "text": "Start Date"}
+                },
+                {
+                    "type": "input",
+                    "block_id": "end_date_block",
+                    "element": {
+                        "type": "datepicker",
+                        "action_id": "end_date_input",
+                        "initial_date": sunday.strftime('%Y-%m-%d'),
+                        "placeholder": {"type": "plain_text", "text": "Select end date"}
+                    },
+                    "label": {"type": "plain_text", "text": "End Date"}
                 },
                 {
                     "type": "input",
                     "block_id": "oncall_block",
                     "element": {
-                        "type": "plain_text_input",
+                        "type": "multi_users_select",
                         "action_id": "oncall_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., John Doe"}
+                        "placeholder": {"type": "plain_text", "text": "Select oncall users"}
                     },
                     "label": {"type": "plain_text", "text": "DevOps Oncall"}
                 }
@@ -433,9 +487,29 @@ def handle_trm_setup_modal_submission(ack, body, client):
         }
     
     # Save metadata
+    from datetime import datetime
     trm_session_data[user_id]["metadata"]["week_number"] = values["week_number_block"]["week_number_input"]["value"]
-    trm_session_data[user_id]["metadata"]["date_range"] = values["date_range_block"]["date_range_input"]["value"]
-    trm_session_data[user_id]["metadata"]["oncall"] = values["oncall_block"]["oncall_input"]["value"]
+    
+    # Get start and end dates from datepickers
+    start_date_str = values["start_date_block"]["start_date_input"]["selected_date"]
+    end_date_str = values["end_date_block"]["end_date_input"]["selected_date"]
+    
+    # Format date range (e.g., "Mar 2 to Mar 8")
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+    date_range = f"{start_date.strftime('%b %d')} to {end_date.strftime('%b %d')}"
+    
+    trm_session_data[user_id]["metadata"]["date_range"] = date_range
+    
+    # Get selected users and format as mentions
+    selected_users = values["oncall_block"]["oncall_input"]["selected_users"]
+    print(f"🔍 DEBUG: Selected users for oncall: {selected_users}")
+    trm_session_data[user_id]["metadata"]["oncall"] = format_user_mentions(selected_users)
+    oncall_names = get_user_names_from_ids(selected_users)
+    trm_session_data[user_id]["metadata"]["oncall_names"] = oncall_names
+    print(f"🔍 DEBUG: Stored oncall_names: {oncall_names}")
+    print(f"🔍 DEBUG: Full metadata: {trm_session_data[user_id]['metadata']}")
+
     
     # Acknowledge and open category selection modal
     ack(response_action="push", view={
@@ -613,7 +687,9 @@ def handle_add_issue_modal_submission(ack, body, client):
     
     # Get theme - either from dropdown or custom input
     theme_selected = values["theme_select_block"]["theme_select_input"]["selected_option"]["value"]
-    custom_theme = values["custom_theme_block"]["custom_theme_input"].get("value", "").strip()
+    custom_theme_input = values["custom_theme_block"]["custom_theme_input"]
+    custom_theme_value = custom_theme_input.get("value", "") if custom_theme_input else ""
+    custom_theme = custom_theme_value.strip() if custom_theme_value else ""
     
     # Use custom theme if "Custom" was selected and custom_theme is provided
     if theme_selected == "Custom" and custom_theme:
@@ -906,9 +982,9 @@ def handle_add_outage_button(ack, body, client):
                     "type": "input",
                     "block_id": "owner_block",
                     "element": {
-                        "type": "plain_text_input",
+                        "type": "multi_users_select",
                         "action_id": "owner_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., DevOps Team"}
+                        "placeholder": {"type": "plain_text", "text": "Select owner(s)"}
                     },
                     "label": {"type": "plain_text", "text": "Owner"}
                 },
@@ -1005,9 +1081,9 @@ def handle_add_action_item_button(ack, body, client):
                     "type": "input",
                     "block_id": "ai_owner_block",
                     "element": {
-                        "type": "plain_text_input",
+                        "type": "multi_users_select",
                         "action_id": "ai_owner_input",
-                        "placeholder": {"type": "plain_text", "text": "e.g., DevOps Team"}
+                        "placeholder": {"type": "plain_text", "text": "Select owner(s)"}
                     },
                     "label": {"type": "plain_text", "text": "Owner"}
                 },
@@ -1103,7 +1179,12 @@ def handle_add_outage_modal_submission(ack, body, client):
     outage_name = values["outage_name_block"]["outage_name_input"]["value"]
     severity = values["severity_block"]["severity_input"]["selected_option"]["value"]
     reason = values["reason_block"]["reason_input"]["value"]
-    owner = values["owner_block"]["owner_input"]["value"]
+    
+    # Get selected users and format as mentions
+    selected_users = values["owner_block"]["owner_input"]["selected_users"]
+    owner = format_user_mentions(selected_users)
+    owner_names = get_user_names_from_ids(selected_users)
+    
     date = values["outage_date_block"]["outage_date_input"]["selected_date"]
     
     # Save to session
@@ -1112,6 +1193,7 @@ def handle_add_outage_modal_submission(ack, body, client):
         "severity": severity,
         "reason": reason,
         "owner": owner,
+        "owner_names": owner_names,
         "date": date
     })
     
@@ -1147,13 +1229,19 @@ def handle_add_action_item_modal_submission(ack, body, client):
     values = body["view"]["state"]["values"]
     
     description = values["ai_description_block"]["ai_description_input"]["value"]
-    owner = values["ai_owner_block"]["ai_owner_input"]["value"]
+    
+    # Get selected users and format as mentions
+    selected_users = values["ai_owner_block"]["ai_owner_input"]["selected_users"]
+    owner = format_user_mentions(selected_users)
+    owner_names = get_user_names_from_ids(selected_users)
+    
     eta = values["eta_block"]["eta_input"]["value"]
     
     # Save to session
     trm_session_data[user_id]["action_items"].append({
         "description": description,
         "owner": owner,
+        "owner_names": owner_names,
         "eta": eta
     })
     

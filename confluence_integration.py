@@ -134,7 +134,9 @@ class ConfluenceIntegration:
         outages_rows = ""
         if data["outages"]:
             for outage in data["outages"]:
-                outages_rows += f"<tr><td>{outage['outage_name']}</td><td>{outage['severity']}</td><td>{outage['reason']}</td><td>{outage['owner']}</td><td>{outage['date']}</td></tr>"
+                # Use owner_names for Confluence, fall back to owner if not available
+                owner_display = outage.get('owner_names', outage.get('owner', ''))
+                outages_rows += f"<tr><td>{outage['outage_name']}</td><td>{outage['severity']}</td><td>{outage['reason']}</td><td>{owner_display}</td><td>{outage['date']}</td></tr>"
         else:
             outages_rows = "<tr><td colspan='5'><em>No outages reported</em></td></tr>"
         
@@ -142,14 +144,23 @@ class ConfluenceIntegration:
         action_items_rows = ""
         if data["action_items"]:
             for ai in data["action_items"]:
-                action_items_rows += f"<tr><td>{ai['description']}</td><td>{ai['owner']}</td><td>{ai['eta']}</td></tr>"
+                # Use owner_names for Confluence, fall back to owner if not available
+                owner_display = ai.get('owner_names', ai.get('owner', ''))
+                action_items_rows += f"<tr><td>{ai['description']}</td><td>{owner_display}</td><td>{ai['eta']}</td></tr>"
         else:
             action_items_rows = "<tr><td colspan='3'><em>No action items</em></td></tr>"
         
         # Complete HTML content
+        # Use oncall_names for Confluence display, fall back to oncall if not available
+        oncall_display = metadata.get('oncall_names', metadata.get('oncall', ''))
+        print(f"🔍 DEBUG Confluence: metadata keys = {metadata.keys()}")
+        print(f"🔍 DEBUG Confluence: oncall = {metadata.get('oncall')}")
+        print(f"🔍 DEBUG Confluence: oncall_names = {metadata.get('oncall_names')}")
+        print(f"🔍 DEBUG Confluence: oncall_display = {oncall_display}")
+        
         html_content = f"""
 <h1>ProdEngg TRM — Week {metadata['week_number']} | {metadata['date_range']}</h1>
-<p><strong>DevOps Oncall:</strong> {metadata['oncall']}</p>
+<p><strong>DevOps Oncall:</strong> {oncall_display}</p>
 <hr/>
 
 <ac:structured-macro ac:name="toc" ac:schema-version="1">
