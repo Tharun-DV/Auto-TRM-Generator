@@ -27,7 +27,6 @@
 - **IMPORTANT**: You'll see a token starting with `xapp-`
   - **Copy this token immediately** and save it somewhere safe
   - This is your `SLACK_APP_TOKEN`
-  - Example: `xapp-1-A`
 
 ---
 
@@ -66,7 +65,6 @@
 - **IMPORTANT**: You'll see a **Bot User OAuth Token** starting with `xoxb-`
   - **Copy this token immediately** and save it
   - This is your `SLACK_BOT_TOKEN`
-  - Example: `xoxb*-`
 
 ---
 
