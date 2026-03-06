@@ -259,8 +259,12 @@ Messages:
 
 @app.command("/trm")
 def handle_trm_command(ack, body, client):
-    """Handle /trm command - opens modal for week/date input."""
+    """Handle /trm command - opens modal for date range selection."""
     ack()
+    
+    # Get today's date for default values
+    today = datetime.now()
+    yesterday = today - timedelta(days=1)
     
     client.views_open(
         trigger_id=body["trigger_id"],
@@ -272,24 +276,46 @@ def handle_trm_command(ack, body, client):
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": [
                 {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Select Date Range:*\nChoose start and end dates for your TRM report"
+                    }
+                },
+                {
                     "type": "input",
-                    "block_id": "date_range_block",
+                    "block_id": "start_date_block",
                     "element": {
-                        "type": "plain_text_input",
-                        "action_id": "date_range_input",
+                        "type": "datepicker",
+                        "action_id": "start_date_input",
+                        "initial_date": yesterday.strftime("%Y-%m-%d"),
                         "placeholder": {
                             "type": "plain_text",
-                            "text": "e.g., week 8, Feb 25 to Mar 4 2026, last week"
+                            "text": "Select start date"
                         }
                     },
-                    "label": {"type": "plain_text", "text": "Week or Date Range"}
+                    "label": {"type": "plain_text", "text": "Start Date"}
+                },
+                {
+                    "type": "input",
+                    "block_id": "end_date_block",
+                    "element": {
+                        "type": "datepicker",
+                        "action_id": "end_date_input",
+                        "initial_date": yesterday.strftime("%Y-%m-%d"),
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": "Select end date"
+                        }
+                    },
+                    "label": {"type": "plain_text", "text": "End Date"}
                 },
                 {
                     "type": "context",
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": "*Examples:*\n• `week 8` - Week 8 of current year\n• `Feb 25 to Mar 4 2026` - Specific date range\n• `last week` - Previous week\n• `yesterday` - Yesterday only"
+                            "text": "💡 *Quick tip:* Select the same date for both start and end to generate a single-day report"
                         }
                     ]
                 }
@@ -302,31 +328,52 @@ def handle_trm_command(ack, body, client):
 def handle_trm_modal_submission(ack, body, client, view):
     """Handle TRM modal submission - generate and send report."""
     # Extract the date range from the modal
-    date_range_text = view["state"]["values"]["date_range_block"]["date_range_input"]["value"]
+    start_date_str = view["state"]["values"]["start_date_block"]["start_date_input"]["selected_date"]
+    end_date_str = view["state"]["values"]["end_date_block"]["end_date_input"]["selected_date"]
     user_id = body["user"]["id"]
     
     # Acknowledge the modal submission immediately
     ack()
     
     # Validate input
-    if not date_range_text or not date_range_text.strip():
+    if not start_date_str or not end_date_str:
         client.chat_postMessage(
             channel=user_id,
-            text="❌ Please provide a date range.\n\nExamples:\n• `week 8`\n• `Feb 25 to Mar 4 2026`\n• `last week`"
+            text="❌ Please select both start and end dates."
         )
         return
-    
-    text = date_range_text.strip()
     
     # Send acknowledgment message
     client.chat_postMessage(
         channel=user_id,
-        text=f"🔄 Generating TRM report for: *{text}*\n\nFetching messages from #devops-help..."
+        text=f"🔄 Generating TRM report for: *{start_date_str} to {end_date_str}*\n\nFetching messages from #devops-help..."
     )
     
     try:
-        # Parse date range
-        oldest, latest, start_date_str, end_date_str, week_num = parse_date_range(text)
+        # Parse selected dates (format: YYYY-MM-DD)
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+        
+        # Validate date range
+        if end_date < start_date:
+            client.chat_postMessage(
+                channel=user_id,
+                text="❌ End date cannot be before start date. Please try again."
+            )
+            return
+        
+        # Set timestamps to cover full days
+        start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Get Unix timestamps
+        oldest = start_date.timestamp()
+        latest = end_date.timestamp()
+        
+        # Format dates for display
+        start_date_display = start_date.strftime("%b %d")
+        end_date_display = end_date.strftime("%b %d")
+        week_num = start_date.isocalendar()[1]
         
         # Fetch messages from #devops-help
         messages = fetch_slack_messages(client, DEVOPS_HELP_CHANNEL_ID, oldest, latest)
@@ -334,7 +381,7 @@ def handle_trm_modal_submission(ack, body, client, view):
         if not messages:
             client.chat_postMessage(
                 channel=user_id,
-                text=f"⚠️ No messages found in #devops-help for the period: {start_date_str} to {end_date_str}"
+                text=f"⚠️ No messages found in #devops-help for the period: {start_date_display} to {end_date_display}"
             )
             return
         
@@ -345,7 +392,7 @@ def handle_trm_modal_submission(ack, body, client, view):
         )
         
         # Generate TRM report using Portkey AI
-        trm_report = summarize_with_portkey(messages, start_date_str, end_date_str, week_num)
+        trm_report = summarize_with_portkey(messages, start_date_display, end_date_display, week_num)
         
         # Post TRM report
         client.chat_postMessage(
@@ -353,11 +400,6 @@ def handle_trm_modal_submission(ack, body, client, view):
             text=trm_report
         )
         
-    except ValueError as e:
-        client.chat_postMessage(
-            channel=user_id,
-            text=f"❌ Date parsing error: {str(e)}\n\nPlease use formats like:\n• `week 8`\n• `Feb 25 to Mar 4 2026`\n• `last week`"
-        )
     except Exception as e:
         client.chat_postMessage(
             channel=user_id,

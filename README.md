@@ -4,7 +4,7 @@ An AI-powered Slack bot that generates Technical Review Meeting (TRM) reports fo
 
 ## Features
 
-- 📅 **Flexible Date Parsing**: `week 8`, `Feb 25 to Mar 4 2026`, `last week`
+- 📅 **Calendar Date Picker**: Interactive calendar UI to select date ranges
 - 🤖 **AI-Powered Summarization**: Uses Claude Sonnet 4.5 via Portkey AI
 - 📊 **Structured Reports**: Issues, Metrics, Alerts, Outages, Action Items
 - 💬 **Slack Integration**: Fetches messages and posts formatted reports
@@ -33,13 +33,14 @@ python app.py
 ```
 
 ### 4. Use in Slack
-Type `/trm` in Slack - a modal will appear asking for the week or date range.
+Type `/trm` in Slack - a modal will appear with calendar date pickers.
 
-**Examples of inputs:**
-- `week 8`
-- `Feb 25 to Mar 4 2026`
-- `last week`
-- `yesterday`
+**How to use:**
+1. Select **Start Date** from the calendar picker
+2. Select **End Date** from the calendar picker
+3. Click **Generate Report**
+
+The bot will fetch messages from #devops-help for the selected date range and generate a TRM report.
 
 ## Documentation
 
@@ -54,9 +55,9 @@ Type `/trm` in Slack - a modal will appear asking for the week or date range.
 ## How It Works
 
 1. User types `/trm` in Slack
-2. A modal appears asking for week or date range
-3. User enters input (e.g., "week 8" or "Feb 25 to Mar 4 2026") and clicks "Generate Report"
-4. Bot parses the date range (e.g., "week 8" → Feb 25 to Mar 4)
+2. A modal appears with calendar date pickers for start and end dates
+3. User selects dates from the calendar and clicks "Generate Report"
+4. Bot validates the date range (end date must be after start date)
 5. Bot fetches all messages from #devops-help for that period
 6. Bot sends messages to Portkey AI (Claude Sonnet 4.5)
 7. AI categorizes issues, extracts metrics, and formats TRM report
@@ -108,10 +109,7 @@ Run the test suite:
 venv/bin/python test_bot.py
 ```
 
-Test with a small date range:
-```
-/trm yesterday
-```
+Test with a small date range by selecting yesterday for both start and end dates.
 
 ## Troubleshooting
 
@@ -120,7 +118,7 @@ Test with a small date range:
 | No messages found | Check channel ID, bot permissions, date range |
 | API error | Verify PORTKEY_API_KEY, check quota |
 | Permission denied | Add `channels:history` scope, re-install app |
-| Date parsing error | Use clearer format: "Feb 25 to Mar 4 2026" |
+| End date before start date | Select end date after start date in calendar |
 
 See [TRM_BOT_GUIDE.md](TRM_BOT_GUIDE.md) for detailed troubleshooting.
 
