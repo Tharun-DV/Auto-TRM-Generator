@@ -5,6 +5,7 @@ import certifi
 import re
 import requests
 import dateparser
+import json
 from datetime import datetime, timedelta
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -61,6 +62,81 @@ app = App(client=client)
 # In-memory storage for multi-step modal data
 # Structure: {user_id: {category: [entries], metadata: {...}}}
 trm_session_data = {}
+
+# Draft storage directory
+DRAFTS_DIR = os.path.join(os.path.dirname(__file__), "drafts")
+
+
+def get_draft_path(user_id):
+    """Get the file path for a user's draft."""
+    return os.path.join(DRAFTS_DIR, f"{user_id}.json")
+
+
+def save_draft(user_id):
+    """Save current session data as draft with timestamp."""
+    try:
+        if user_id not in trm_session_data:
+            return False
+        
+        draft_data = {
+            "data": trm_session_data[user_id],
+            "timestamp": datetime.now().isoformat(),
+            "last_saved": datetime.now().strftime("%b %d, %Y at %I:%M %p")
+        }
+        
+        os.makedirs(DRAFTS_DIR, exist_ok=True)
+        with open(get_draft_path(user_id), 'w') as f:
+            json.dump(draft_data, f, indent=2)
+        
+        print(f"💾 Saved draft for user {user_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error saving draft for {user_id}: {e}")
+        return False
+
+
+def load_draft(user_id):
+    """Load draft data for a user."""
+    try:
+        draft_path = get_draft_path(user_id)
+        if not os.path.exists(draft_path):
+            return None
+        
+        with open(draft_path, 'r') as f:
+            draft_data = json.load(f)
+        
+        print(f"📂 Loaded draft for user {user_id}")
+        return draft_data
+    except Exception as e:
+        print(f"❌ Error loading draft for {user_id}: {e}")
+        return None
+
+
+def delete_draft(user_id):
+    """Delete draft file for a user."""
+    try:
+        draft_path = get_draft_path(user_id)
+        if os.path.exists(draft_path):
+            os.remove(draft_path)
+            print(f"🗑️ Deleted draft for user {user_id}")
+            return True
+        return False
+    except Exception as e:
+        print(f"❌ Error deleting draft for {user_id}: {e}")
+        return False
+
+
+def has_draft(user_id):
+    """Check if user has a saved draft."""
+    return os.path.exists(get_draft_path(user_id))
+
+
+def get_draft_timestamp(user_id):
+    """Get the last saved timestamp for a draft."""
+    draft = load_draft(user_id)
+    if draft:
+        return draft.get("last_saved", "Unknown")
+    return None
 
 
 def format_user_mentions(user_ids):
@@ -376,10 +452,57 @@ def handle_trm_command(ack, body, client):
 
 @app.command("/trm-manual")
 def handle_trm_manual_command(ack, body, client):
-    """Handle /trm-manual command - opens initial setup modal."""
+    """Handle /trm-manual command - opens initial setup modal or draft selection."""
     ack()
     user_id = body["user_id"]
     
+    # Check if user has an existing draft
+    if has_draft(user_id):
+        draft_timestamp = get_draft_timestamp(user_id)
+        # Show draft selection modal
+        client.views_open(
+            trigger_id=body["trigger_id"],
+            view={
+                "type": "modal",
+                "callback_id": "draft_selection_modal",
+                "title": {"type": "plain_text", "text": "Draft Found"},
+                "close": {"type": "plain_text", "text": "Cancel"},
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*💾 You have a saved draft!*\n\n_Last saved: {draft_timestamp}_\n\nWould you like to continue with your draft or start fresh?"
+                        }
+                    },
+                    {
+                        "type": "actions",
+                        "block_id": "draft_choice_actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "📂 Continue Draft"},
+                                "action_id": "continue_draft_button",
+                                "style": "primary"
+                            },
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "🆕 Start Fresh"},
+                                "action_id": "start_fresh_button"
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+        return
+    
+    # No draft found - proceed with normal setup
+    _open_trm_setup_modal(body["trigger_id"], client, user_id)
+
+
+def _open_trm_setup_modal(trigger_id, client, user_id):
+    """Open the TRM setup modal with fresh or default data."""
     # Get today's date for defaults
     today = datetime.now()
     week_num = today.isocalendar()[1]
@@ -404,7 +527,7 @@ def handle_trm_manual_command(ack, body, client):
     }
     
     client.views_open(
-        trigger_id=body["trigger_id"],
+        trigger_id=trigger_id,
         view={
             "type": "modal",
             "callback_id": "trm_setup_modal",
@@ -467,6 +590,128 @@ def handle_trm_manual_command(ack, body, client):
     )
 
 
+@app.action("continue_draft_button")
+def handle_continue_draft_button(ack, body, client):
+    """Load draft and continue to category selection."""
+    ack()
+    user_id = body["user"]["id"]
+    
+    # Load draft data
+    draft = load_draft(user_id)
+    if draft:
+        trm_session_data[user_id] = draft["data"]
+        
+        # Update the modal to category selection
+        client.views_update(
+            view_id=body["view"]["id"],
+            view=_build_category_selection_view(user_id, f"*📂 Draft Loaded!*\n_Last saved: {draft.get('last_saved', 'Unknown')}_\n\nSelect a category below to continue editing:")
+        )
+    else:
+        client.views_update(
+            view_id=body["view"]["id"],
+            view={
+                "type": "modal",
+                "callback_id": "error_modal",
+                "title": {"type": "plain_text", "text": "Error"},
+                "close": {"type": "plain_text", "text": "Close"},
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "❌ Could not load draft. Please start fresh."
+                        }
+                    }
+                ]
+            }
+        )
+
+
+@app.action("start_fresh_button")
+def handle_start_fresh_button(ack, body, client):
+    """Delete draft and start fresh setup."""
+    ack()
+    user_id = body["user"]["id"]
+    
+    # Delete existing draft
+    delete_draft(user_id)
+    
+    # Update modal to setup modal
+    client.views_update(
+        view_id=body["view"]["id"],
+        view=_get_trm_setup_modal_view()
+    )
+
+
+def _get_trm_setup_modal_view():
+    """Build the TRM setup modal view."""
+    today = datetime.now()
+    week_num = today.isocalendar()[1]
+    days_since_monday = today.weekday()
+    monday = today - timedelta(days=days_since_monday)
+    sunday = monday + timedelta(days=6)
+    
+    return {
+        "type": "modal",
+        "callback_id": "trm_setup_modal",
+        "title": {"type": "plain_text", "text": "TRM Setup"},
+        "submit": {"type": "plain_text", "text": "Continue"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*📋 Manual TRM Report Setup*\nFirst, let's set up the basic information"
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "week_number_block",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "week_number_input",
+                    "initial_value": str(week_num),
+                    "placeholder": {"type": "plain_text", "text": "e.g., 10"}
+                },
+                "label": {"type": "plain_text", "text": "Week Number"}
+            },
+            {
+                "type": "input",
+                "block_id": "start_date_block",
+                "element": {
+                    "type": "datepicker",
+                    "action_id": "start_date_input",
+                    "initial_date": monday.strftime('%Y-%m-%d'),
+                    "placeholder": {"type": "plain_text", "text": "Select start date"}
+                },
+                "label": {"type": "plain_text", "text": "Start Date"}
+            },
+            {
+                "type": "input",
+                "block_id": "end_date_block",
+                "element": {
+                    "type": "datepicker",
+                    "action_id": "end_date_input",
+                    "initial_date": sunday.strftime('%Y-%m-%d'),
+                    "placeholder": {"type": "plain_text", "text": "Select end date"}
+                },
+                "label": {"type": "plain_text", "text": "End Date"}
+            },
+            {
+                "type": "input",
+                "block_id": "oncall_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "oncall_input",
+                    "placeholder": {"type": "plain_text", "text": "Select oncall users"}
+                },
+                "label": {"type": "plain_text", "text": "DevOps Oncall"}
+            }
+        ]
+    }
+
+
 @app.view("trm_setup_modal")
 def handle_trm_setup_modal_submission(ack, body, client):
     """Handle TRM setup modal submission - save metadata and show category selection."""
@@ -510,77 +755,11 @@ def handle_trm_setup_modal_submission(ack, body, client):
     print(f"🔍 DEBUG: Stored oncall_names: {oncall_names}")
     print(f"🔍 DEBUG: Full metadata: {trm_session_data[user_id]['metadata']}")
 
+    # Auto-save draft after setup
+    save_draft(user_id)
     
     # Acknowledge and open category selection modal
-    ack(response_action="push", view={
-        "type": "modal",
-        "callback_id": "trm_category_selection_modal",
-        "title": {"type": "plain_text", "text": "Select Categories"},
-        "submit": {"type": "plain_text", "text": "Finish & Generate"},
-        "close": {"type": "plain_text", "text": "Cancel"},
-        "blocks": [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "*📝 Add Data to Your TRM Report*\nSelect a category below to add entries:"
-                }
-            },
-            {
-                "type": "actions",
-                "block_id": "category_actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "➕ Add Issue"},
-                        "action_id": "add_issue_button",
-                        "style": "primary"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "📊 Add Metric"},
-                        "action_id": "add_metric_button"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "🚨 Add Alert"},
-                        "action_id": "add_alert_button"
-                    }
-                ]
-            },
-            {
-                "type": "actions",
-                "block_id": "category_actions_2",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "💰 Add Cost"},
-                        "action_id": "add_cost_button"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "🔥 Add Outage"},
-                        "action_id": "add_outage_button"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "✅ Add Action Item"},
-                        "action_id": "add_action_item_button"
-                    }
-                ]
-            },
-            {
-                "type": "divider"
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": _generate_summary_text(user_id)
-                }
-            }
-        ]
-    })
+    ack(response_action="push", view=_build_category_selection_view(user_id))
 
 
 def _generate_summary_text(user_id):
@@ -705,6 +884,9 @@ def handle_add_issue_modal_submission(ack, body, client):
     # Save to session
     trm_session_data[user_id]["issues"].append({"theme": theme, "description": description})
     
+    # Auto-save draft
+    save_draft(user_id)
+    
     # Acknowledge and update parent view
     ack(response_action="update", view={
         "type": "modal",
@@ -760,6 +942,23 @@ def handle_add_issue_modal_submission(ack, body, client):
                         "type": "button",
                         "text": {"type": "plain_text", "text": "✅ Add Action Item"},
                         "action_id": "add_action_item_button"
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "block_id": "draft_actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "💾 Save Draft"},
+                        "action_id": "save_draft_button"
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "🗑️ Clear Draft"},
+                        "action_id": "clear_draft_button",
+                        "style": "danger"
                     }
                 ]
             },
@@ -856,76 +1055,11 @@ def handle_add_alert_modal_submission(ack, body, client):
         "description": description
     })
     
+    # Auto-save draft
+    save_draft(user_id)
+    
     # Acknowledge and update parent view
-    ack(response_action="update", view={
-        "type": "modal",
-        "callback_id": "trm_category_selection_modal",
-        "title": {"type": "plain_text", "text": "Select Categories"},
-        "submit": {"type": "plain_text", "text": "Finish & Generate"},
-        "close": {"type": "plain_text", "text": "Cancel"},
-        "blocks": [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*📝 Add Data to Your TRM Report*\n✅ Added alert: {alert_name}"
-                }
-            },
-            {
-                "type": "actions",
-                "block_id": "category_actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "➕ Add Issue"},
-                        "action_id": "add_issue_button",
-                        "style": "primary"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "📊 Add Metric"},
-                        "action_id": "add_metric_button"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "🚨 Add Alert"},
-                        "action_id": "add_alert_button"
-                    }
-                ]
-            },
-            {
-                "type": "actions",
-                "block_id": "category_actions_2",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "💰 Add Cost"},
-                        "action_id": "add_cost_button"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "🔥 Add Outage"},
-                        "action_id": "add_outage_button"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "✅ Add Action Item"},
-                        "action_id": "add_action_item_button"
-                    }
-                ]
-            },
-            {
-                "type": "divider"
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": _generate_summary_text(user_id)
-                }
-            }
-        ]
-    })
+    ack(response_action="update", view=_build_category_selection_view(user_id, f"*📝 Add Data to Your TRM Report*\n✅ Added alert: {alert_name}"))
 
 
 @app.action("add_outage_button")
@@ -1197,6 +1331,9 @@ def handle_add_outage_modal_submission(ack, body, client):
         "date": date
     })
     
+    # Auto-save draft
+    save_draft(user_id)
+    
     # Acknowledge and return to category selection
     ack(response_action="update", view=_build_category_selection_view(user_id, f"✅ Added outage: {outage_name}"))
 
@@ -1217,6 +1354,9 @@ def handle_add_cost_modal_submission(ack, body, client):
         "last_week_cost": last_week_cost,
         "this_week_cost": this_week_cost
     })
+    
+    # Auto-save draft
+    save_draft(user_id)
     
     # Acknowledge and return to category selection
     ack(response_action="update", view=_build_category_selection_view(user_id, f"✅ Added cost entry for {resource}"))
@@ -1245,6 +1385,9 @@ def handle_add_action_item_modal_submission(ack, body, client):
         "eta": eta
     })
     
+    # Auto-save draft
+    save_draft(user_id)
+    
     # Acknowledge and return to category selection
     ack(response_action="update", view=_build_category_selection_view(user_id, "✅ Added action item"))
 
@@ -1268,12 +1411,21 @@ def handle_add_metric_modal_submission(ack, body, client):
         "delta": delta
     })
     
+    # Auto-save draft
+    save_draft(user_id)
+    
     # Acknowledge and return to category selection
     ack(response_action="update", view=_build_category_selection_view(user_id, "✅ Updated P0 Metrics"))
 
 
 def _build_category_selection_view(user_id, message="*📝 Add Data to Your TRM Report*\nSelect a category below to add entries:"):
     """Helper function to build the category selection modal view."""
+    # Get draft timestamp if exists
+    draft_status = ""
+    if has_draft(user_id):
+        draft_timestamp = get_draft_timestamp(user_id)
+        draft_status = f"\n\n_💾 Last saved: {draft_timestamp}_"
+    
     return {
         "type": "modal",
         "callback_id": "trm_category_selection_modal",
@@ -1285,7 +1437,7 @@ def _build_category_selection_view(user_id, message="*📝 Add Data to Your TRM 
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": message
+                    "text": message + draft_status
                 }
             },
             {
@@ -1332,6 +1484,23 @@ def _build_category_selection_view(user_id, message="*📝 Add Data to Your TRM 
                 ]
             },
             {
+                "type": "actions",
+                "block_id": "draft_actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "💾 Save Draft"},
+                        "action_id": "save_draft_button"
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "🗑️ Clear Draft"},
+                        "action_id": "clear_draft_button",
+                        "style": "danger"
+                    }
+                ]
+            },
+            {
                 "type": "divider"
             },
             {
@@ -1343,6 +1512,45 @@ def _build_category_selection_view(user_id, message="*📝 Add Data to Your TRM 
             }
         ]
     }
+
+
+@app.action("save_draft_button")
+def handle_save_draft_button(ack, body, client):
+    """Save current work as draft."""
+    ack()
+    user_id = body["user"]["id"]
+    
+    if save_draft(user_id):
+        draft_timestamp = get_draft_timestamp(user_id)
+        # Update the modal to show saved message
+        client.views_update(
+            view_id=body["view"]["id"],
+            view=_build_category_selection_view(user_id, f"*✅ Draft Saved!*\n_Saved at: {draft_timestamp}_\n\nYou can safely close this and continue later with `/trm-manual`")
+        )
+    else:
+        client.views_update(
+            view_id=body["view"]["id"],
+            view=_build_category_selection_view(user_id, "*❌ Failed to save draft*\n\nPlease try again.")
+        )
+
+
+@app.action("clear_draft_button")
+def handle_clear_draft_button(ack, body, client):
+    """Clear saved draft after confirmation."""
+    ack()
+    user_id = body["user"]["id"]
+    
+    # Delete the draft
+    if delete_draft(user_id):
+        client.views_update(
+            view_id=body["view"]["id"],
+            view=_build_category_selection_view(user_id, "*🗑️ Draft Cleared!*\n\nYour draft has been deleted. Continue adding entries or start over.")
+        )
+    else:
+        client.views_update(
+            view_id=body["view"]["id"],
+            view=_build_category_selection_view(user_id, "*No draft to clear*\n\nContinue adding entries below.")
+        )
 
 
 @app.view("trm_category_selection_modal")
@@ -1486,8 +1694,9 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
                 text="⚠️ Confluence page creation failed. Report posted to Slack instead."
             )
         
-        # Clean up session data
+        # Clean up session data and draft
         del trm_session_data[user_id]
+        delete_draft(user_id)  # Delete the draft after successful report generation
         
     except Exception as e:
         client.chat_postMessage(

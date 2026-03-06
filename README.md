@@ -6,6 +6,7 @@ An AI-powered Slack bot that generates Technical Review Meeting (TRM) reports fo
 
 - 📅 **Calendar Date Picker**: Interactive calendar UI to select date ranges
 - ✍️ **Manual Entry Mode**: Create TRM reports with structured multi-step forms via `/trm-manual`
+- 💾 **Draft Management**: Save drafts and continue later (NEW!)
 - 🎨 **Custom Themes**: Add unlimited custom themes for issues (Networking, Database, Security, etc.)
 - 📊 **Enhanced Metrics**: Week-over-week comparison with delta tracking
 - 🤖 **AI-Powered Summarization**: Uses Claude Sonnet 4.5 via Portkey AI for `/trm` command
@@ -56,26 +57,69 @@ The bot will fetch messages from #devops-help and generate an AI-powered TRM rep
 #### Option B: Manual TRM Entry (`/trm-manual`)
 Type `/trm-manual` in Slack - a multi-step modal flow will guide you.
 
+**🆕 Draft Management:**
+- Work is **automatically saved** after each entry
+- Can safely close and continue later
+- When reopening, choose "📂 Continue Draft" or "🆕 Start Fresh"
+- Manual save with "💾 Save Draft" button
+- Clear draft with "🗑️ Clear Draft" button
+- See "Last saved" timestamp in modal
+
 **Step 1: Setup**
 1. Fill in **Week Number** (auto-filled)
 2. Fill in **Date Range** (auto-filled)
 3. Fill in **DevOps Oncall** name
-4. Click **Continue**
+4. Click **Continue** → *Auto-saved!*
 
 **Step 2: Add Entries**
-- **➕ Add Issue**: Select theme (or custom) + description
-- **📊 Add Metric**: Name, Last Week, Current Week, Delta/Comments
-- **🚨 Add Alert**: Component, alert name, frequency, description
-- **💰 Add Cost**: Resource, last week cost, this week cost
-- **🔥 Add Outage**: Name, severity, reason, owner, date
-- **✅ Add Action Item**: Description, owner, ETA
+- **➕ Add Issue**: Select theme (or custom) + description → *Auto-saved!*
+- **📊 Add Metric**: Name, Last Week, Current Week, Delta/Comments → *Auto-saved!*
+- **🚨 Add Alert**: Component, alert name, frequency, description → *Auto-saved!*
+- **💰 Add Cost**: Resource, last week cost, this week cost → *Auto-saved!*
+- **🔥 Add Outage**: Name, severity, reason, owner, date → *Auto-saved!*
+- **✅ Add Action Item**: Description, owner, ETA → *Auto-saved!*
 
 Add as many entries as needed for each category!
 
-**Step 3: Generate**
-Click **Finish & Generate** to create the Confluence page.
+**Step 3: Save or Generate**
+- Click **💾 Save Draft** to save and exit (continue later)
+- Click **🗑️ Clear Draft** to delete saved draft
+- Click **Finish & Generate** to create Confluence page
 
-## New Features (v3.4)
+**Draft saved at:** `drafts/{user_id}.json`
+
+## New Features (v4.0)
+
+### 💾 Draft Management (NEW!)
+Never lose your work! Save drafts and continue later.
+
+**Auto-Save:**
+- Automatically saves after every entry
+- No manual save needed (but available)
+- Shows "Last saved: [timestamp]" in modal
+
+**Manual Controls:**
+- **💾 Save Draft** button - Save and exit
+- **🗑️ Clear Draft** button - Delete saved draft
+- **📂 Continue Draft** - Resume from where you left off
+
+**Example Workflow:**
+```
+1. Run /trm-manual
+2. Setup: Week 10, dates, oncall → Auto-saved!
+3. Add 2 issues → Auto-saved!
+4. Need to leave? Click "💾 Save Draft"
+5. Close modal safely
+
+[Later...]
+6. Run /trm-manual
+7. "Draft Found! (Last saved: Mar 6, 2026 at 02:30 PM)"
+8. Click "📂 Continue Draft"
+9. Continue adding entries...
+10. Finish & Generate → Draft auto-deleted!
+```
+
+See **[DRAFT_FEATURE.md](DRAFT_FEATURE.md)** for complete documentation.
 
 ### 🎨 Custom Themes for Issues
 Not limited to predefined themes! Add your own:
@@ -226,6 +270,7 @@ See [CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md) for Confluence-specific troublesh
 
 - **[SETUP.md](SETUP.md)** - Initial setup instructions
 - **[CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md)** - Confluence integration guide
+- **[DRAFT_FEATURE.md](DRAFT_FEATURE.md)** - Draft management guide (NEW!)
 - **[NEW_FEATURES.md](NEW_FEATURES.md)** - Custom themes & enhanced metrics guide
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture & flow
 - **[FINAL_SUMMARY.md](FINAL_SUMMARY.md)** - Complete implementation summary
@@ -240,8 +285,11 @@ Auto-TRM-Generator/
 ├── requirements.txt              # Python dependencies
 ├── env.example                   # Environment variable template
 ├── test_bot.py                   # Test suite
+├── test_draft.py                 # Draft feature tests
+├── drafts/                       # Draft storage (user_id.json)
 ├── SETUP.md                      # Setup guide
 ├── CONFLUENCE_SETUP.md           # Confluence setup
+├── DRAFT_FEATURE.md              # Draft management guide
 ├── NEW_FEATURES.md               # Latest features
 ├── ARCHITECTURE.md               # System architecture
 ├── FINAL_SUMMARY.md              # Complete summary
@@ -255,10 +303,16 @@ Auto-TRM-Generator/
 - `parse_date_range()` - Parses date input into timestamps
 - `summarize_with_portkey()` - Generates TRM report via AI (for `/trm`)
 - `handle_trm_command()` - `/trm` command handler
-- `handle_trm_manual_command()` - `/trm-manual` command handler
-- `handle_add_issue_button()` - Add issue with custom theme
-- `handle_add_metric_button()` - Add metric with week-over-week data
-- `handle_trm_category_selection_modal_submission()` - Final report generation
+- `handle_trm_manual_command()` - `/trm-manual` command handler with draft detection
+- `save_draft()` - Save current session to file (NEW!)
+- `load_draft()` - Load draft from file (NEW!)
+- `delete_draft()` - Delete draft file (NEW!)
+- `has_draft()` - Check if draft exists (NEW!)
+- `handle_add_issue_button()` - Add issue with custom theme + auto-save
+- `handle_add_metric_button()` - Add metric with week-over-week data + auto-save
+- `handle_save_draft_button()` - Manual save draft handler (NEW!)
+- `handle_clear_draft_button()` - Clear draft handler (NEW!)
+- `handle_trm_category_selection_modal_submission()` - Final report generation + draft cleanup
 
 **confluence_integration.py:**
 - `create_trm_page()` - Creates Confluence page via REST API
@@ -278,7 +332,8 @@ Internal tool for Swiggy DevOps team.
 
 ---
 
-**Version:** 3.4  
+**Version:** 4.0  
 **Last Updated:** March 6, 2026  
 **Default AI Model:** Claude Sonnet 4.5 (`pilot-poc/claude-sonnet-4-5`)  
-**Output:** Confluence Pages with Table of Contents
+**Output:** Confluence Pages with Table of Contents  
+**New:** Draft Management with Auto-Save
