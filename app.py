@@ -383,6 +383,94 @@ Messages:
         return f"❌ Error generating TRM report: {str(e)}\n\nPlease check your Portkey API configuration and try again."
 
 
+def calculate_metrics_from_jira(current_week_start: str, current_week_end: str):
+    """Calculate DevOps metrics comparing current week vs last week from Jira data."""
+    from datetime import datetime, timedelta
+    
+    try:
+        current_start = datetime.strptime(current_week_start, "%Y-%m-%d")
+        last_week_start = current_start - timedelta(days=7)
+        last_week_end = last_week_start + timedelta(days=6)
+        
+        last_week_start_str = last_week_start.strftime("%Y-%m-%d")
+        last_week_end_str = last_week_end.strftime("%Y-%m-%d")
+        
+        print(f"📊 Calculating metrics:")
+        print(f"   Current week: {current_week_start} to {current_week_end}")
+        print(f"   Last week: {last_week_start_str} to {last_week_end_str}")
+        
+        current_metrics = jira.fetch_tickets_for_metrics(current_week_start, current_week_end)
+        last_metrics = jira.fetch_tickets_for_metrics(last_week_start_str, last_week_end_str)
+        
+        metrics = []
+        
+        current_total = current_metrics["total"]
+        last_total = last_metrics["total"]
+        delta = current_total - last_total
+        delta_text = f"{delta:+d} ({delta/max(last_total, 1)*100:+.1f}%)" if last_total > 0 else f"+{current_total}"
+        
+        metrics.append({
+            "metric_name": "Total Tickets",
+            "last_week": str(last_total),
+            "current_week": str(current_total),
+            "delta": delta_text
+        })
+        
+        current_p1 = current_metrics["p1_count"]
+        last_p1 = last_metrics["p1_count"]
+        delta = current_p1 - last_p1
+        delta_text = f"{delta:+d}" if delta != 0 else "No change"
+        
+        metrics.append({
+            "metric_name": "P1/Critical Tickets",
+            "last_week": str(last_p1),
+            "current_week": str(current_p1),
+            "delta": delta_text
+        })
+        
+        current_open = current_metrics["by_status"].get("Open", 0) + current_metrics["by_status"].get("In Progress", 0) + current_metrics["by_status"].get("ToDo", 0)
+        last_open = last_metrics["by_status"].get("Open", 0) + last_metrics["by_status"].get("In Progress", 0) + last_metrics["by_status"].get("ToDo", 0)
+        delta = current_open - last_open
+        delta_text = f"{delta:+d}" if delta != 0 else "No change"
+        
+        metrics.append({
+            "metric_name": "Active Tickets",
+            "last_week": str(last_open),
+            "current_week": str(current_open),
+            "delta": delta_text
+        })
+        
+        current_resolved = current_metrics["by_status"].get("Resolved", 0) + current_metrics["by_status"].get("Closed", 0) + current_metrics["by_status"].get("Done", 0)
+        last_resolved = last_metrics["by_status"].get("Resolved", 0) + last_metrics["by_status"].get("Closed", 0) + last_metrics["by_status"].get("Done", 0)
+        delta = current_resolved - last_resolved
+        delta_text = f"{delta:+d}" if delta != 0 else "No change"
+        
+        metrics.append({
+            "metric_name": "Resolved Tickets",
+            "last_week": str(last_resolved),
+            "current_week": str(current_resolved),
+            "delta": delta_text
+        })
+        
+        current_rcas = current_metrics["s1_rcas"]
+        last_rcas = last_metrics["s1_rcas"]
+        delta = current_rcas - last_rcas
+        delta_text = f"{delta:+d}" if delta != 0 else "No change"
+        
+        metrics.append({
+            "metric_name": "RCAs/Postmortems",
+            "last_week": str(last_rcas),
+            "current_week": str(current_rcas),
+            "delta": delta_text
+        })
+        
+        print(f"✅ Generated {len(metrics)} auto-calculated metrics")
+        return metrics
+        
+    except Exception as e:
+        print(f"⚠️ Error calculating metrics from Jira: {e}")
+        return []
+
 def analyze_jira_tickets_with_ai(ticket_data: dict, start_date: str, end_date: str, week_num: int) -> dict:
     tickets = ticket_data.get("tickets", [])
     total = ticket_data.get("total", 0)
@@ -391,7 +479,7 @@ def analyze_jira_tickets_with_ai(ticket_data: dict, start_date: str, end_date: s
         return {"issues": [], "metrics": [], "alerts": [], "outages": [], "action_items": []}
     
     tickets_text = "\n".join([
-        f"- {t['key']}: {t['summary']} [{t['status']}] [{t['priority']}] [{t['type']}]"
+        f"- {t['key']}: {t['summary']} [{t['status']}] [{t['priority']}] [{t['type']}] [Tech: {t.get('tech', 'N/A')}]"
         for t in tickets[:50]
     ])
     
@@ -434,7 +522,7 @@ Rules:
             "https://api.portkey.ai/v1/chat/completions",
             json=body,
             headers=headers,
-            timeout=60,
+            timeout=120,
             verify=verify_ssl
         )
         print(f"🔍 AI Response status: {response.status_code}")
@@ -1791,7 +1879,25 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
                             data["outages"].extend(ai_extracted["outages"])
                         if ai_extracted.get("action_items"):
                             data["action_items"].extend(ai_extracted["action_items"])
+                        
+
+                        ticket_data["status_dist"] = ai_extracted.get("status_dist", {})
+                        ticket_data["priority_dist"] = ai_extracted.get("priority_dist", {})
+                        ticket_data["tech_dist"] = ai_extracted.get("tech_dist", {})
+                        ticket_data["sla_expired"] = ai_extracted.get("sla_expired", [])
+                        ticket_data["automation"] = ai_extracted.get("automation", [])
+                        ticket_data["vertical_metrics"] = ai_extracted.get("vertical_metrics", [])
+                        ticket_data["cost_vertical"] = ai_extracted.get("cost_vertical", [])
+                        ticket_data["quality_tasks"] = ai_extracted.get("quality_tasks", [])
+                        
                         print(f"✅ Added {len(ai_extracted.get('issues', []))} issues from tickets")
+                        
+                    print(f"📊 Generating auto-metrics for manual TRM...")
+                    auto_metrics = calculate_metrics_from_jira(start_date_str, end_date_str)
+                    if auto_metrics:
+                        data["metrics"].extend(auto_metrics)
+                        print(f"✅ Added {len(auto_metrics)} auto-calculated metrics")
+                    
                 except Exception as e:
                     print(f"⚠️ Could not parse date range for ticket fetch: {e}")
         
@@ -1892,18 +1998,43 @@ def handle_trm_modal_submission(ack, body, client, view):
             "oncall_names": "AI-Generated"
         }
         
+        try:
+            from datetime import datetime as dt
+            start_date_obj = dt.strptime(start_date_display, "%b %d")
+            end_date_obj = dt.strptime(end_date_display, "%b %d")
+            current_year = dt.now().year
+            
+            start_date_formatted = start_date_obj.replace(year=current_year).strftime("%Y-%m-%d")
+            end_date_formatted = end_date_obj.replace(year=current_year).strftime("%Y-%m-%d")
+            
+            auto_metrics = calculate_metrics_from_jira(start_date_formatted, end_date_formatted)
+        except Exception as e:
+            print(f"⚠️ Could not parse dates for metrics: {e}")
+            auto_metrics = []
+        combined_metrics = auto_metrics + ai_data.get("metrics", [])
+        
         data = {
             "issues": ai_data.get("issues", []),
-            "metrics": ai_data.get("metrics", []),
+            "metrics": combined_metrics,
             "alerts": ai_data.get("alerts", []),
             "cost": [],
             "outages": ai_data.get("outages", []),
             "action_items": ai_data.get("action_items", [])
         }
         
+
+        ticket_data["status_dist"] = ai_data.get("status_dist", {})
+        ticket_data["priority_dist"] = ai_data.get("priority_dist", {})
+        ticket_data["tech_dist"] = ai_data.get("tech_dist", {})
+        ticket_data["sla_expired"] = ai_data.get("sla_expired", [])
+        ticket_data["automation"] = ai_data.get("automation", [])
+        ticket_data["vertical_metrics"] = ai_data.get("vertical_metrics", [])
+        ticket_data["cost_vertical"] = ai_data.get("cost_vertical", [])
+        ticket_data["quality_tasks"] = ai_data.get("quality_tasks", [])
+        
         client.chat_postMessage(channel=user_id, text="📄 Creating Confluence page...")
         
-        confluence_url = confluence.create_trm_page(metadata, data, None)
+        confluence_url = confluence.create_trm_page(metadata, data, ticket_data)
         
         if confluence_url:
             client.chat_postMessage(
