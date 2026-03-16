@@ -8,6 +8,7 @@ import os
 import requests
 import json
 from typing import Dict, List, Optional
+from datetime import datetime
 
 
 class ConfluenceIntegration:
@@ -26,13 +27,14 @@ class ConfluenceIntegration:
         if not self.enabled:
             print("⚠️  Confluence integration not configured. Set CONFLUENCE_URL, CONFLUENCE_USER, and CONFLUENCE_API_TOKEN to enable.")
     
-    def create_trm_page(self, metadata: Dict, data: Dict) -> Optional[str]:
+    def create_trm_page(self, metadata: Dict, data: Dict, ticket_data: Optional[Dict] = None) -> Optional[str]:
         """
         Create a Confluence page with TRM report data.
         
         Args:
             metadata: Week number, date range, oncall name
             data: Issues, alerts, outages, etc.
+            ticket_data: Jira ticket data (optional)
         
         Returns:
             str: URL of created page, or None if failed
@@ -44,7 +46,7 @@ class ConfluenceIntegration:
         try:
             # Build page content
             page_title = f"TRM Report - Week {metadata['week_number']} ({metadata['date_range']})"
-            page_content = self._build_confluence_content(metadata, data)
+            page_content = self._build_confluence_content(metadata, data, ticket_data)
             
             # Create page via Confluence REST API
             url = f"{self.confluence_url}/rest/api/content"
@@ -86,7 +88,7 @@ class ConfluenceIntegration:
             print(f"❌ Error creating Confluence page: {e}")
             return None
     
-    def _build_confluence_content(self, metadata: Dict, data: Dict) -> str:
+    def _build_confluence_content(self, metadata: Dict, data: Dict, ticket_data: Optional[Dict] = None) -> str:
         """Build Confluence HTML content from TRM data."""
         
         # Build issues table - support dynamic themes
@@ -149,6 +151,9 @@ class ConfluenceIntegration:
                 action_items_rows += f"<tr><td>{ai['description']}</td><td>{owner_display}</td><td>{ai['eta']}</td></tr>"
         else:
             action_items_rows = "<tr><td colspan='3'><em>No action items</em></td></tr>"
+        
+        # Build ticket data section
+        ticket_section = self._build_ticket_section(ticket_data, metadata['date_range'])
         
         # Complete HTML content
         # Use oncall_names for Confluence display, fall back to oncall if not available
@@ -217,12 +222,7 @@ class ConfluenceIntegration:
 </tbody>
 </table>
 
-<h2>Ticket Data</h2>
-<ul>
-<li>Total Tickets: Not specified</li>
-<li>Date Range: {metadata['date_range']}</li>
-<li>Status: Closed: 0 | Blocked: 0 | Open: 0</li>
-</ul>
+{ticket_section}
 
 <h2>Action Items (TRM AIs)</h2>
 <table>
@@ -234,6 +234,30 @@ class ConfluenceIntegration:
 """
         
         return html_content
+    
+    def _build_ticket_section(self, ticket_data: Optional[Dict], date_range: str) -> str:
+        """Build Jira ticket section for Confluence - simple list format like TRM AI Tickets."""
+        if not ticket_data or ticket_data.get("total", 0) == 0:
+            return f"""
+<h2>TRM AI Tickets</h2>
+<p><em>No tickets found for date range: {date_range}</em></p>
+"""
+        
+        # Build simple ticket list - only ticket IDs
+        ticket_list = ""
+        for ticket in ticket_data.get("tickets", []):
+            # Create Jira ticket link
+            jira_url = os.environ.get("JIRA_URL", "")
+            ticket_key = ticket['key']
+            ticket_link = f"<a href='{jira_url}/browse/{ticket_key}'>{ticket_key}</a>" if jira_url else ticket_key
+            
+            # Build each ticket entry - only ID
+            ticket_list += f"<p>{ticket_link}</p>\n"
+        
+        return f"""
+<h2>TRM AI Tickets</h2>
+{ticket_list}
+"""
 
 
 # Global instance

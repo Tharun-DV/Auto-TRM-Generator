@@ -7,12 +7,13 @@ An AI-powered Slack bot that generates Technical Review Meeting (TRM) reports fo
 - 📅 **Calendar Date Picker**: Interactive calendar UI to select date ranges
 - ✍️ **Manual Entry Mode**: Create TRM reports with structured multi-step forms via `/trm-manual`
 - 💾 **Draft Management**: Save drafts and continue later (NEW!)
+- 🎫 **Jira Integration**: Automatically fetch tickets from Jira projects (NEW!)
 - 🎨 **Custom Themes**: Add unlimited custom themes for issues (Networking, Database, Security, etc.)
 - 📊 **Enhanced Metrics**: Week-over-week comparison with delta tracking
 - 🤖 **AI-Powered Summarization**: Uses Claude Sonnet 4.5 via Portkey AI for `/trm` command
 - 📄 **Confluence Integration**: Creates professional pages with Table of Contents
 - 💬 **Slack Integration**: Fetches messages and sends Confluence URLs
-- ⚙️ **Configurable**: AI model, channel ID, Confluence space
+- ⚙️ **Configurable**: AI model, channel ID, Confluence space, Jira projects
 
 ## Quick Start
 
@@ -34,9 +35,16 @@ export CONFLUENCE_URL='https://your-company.atlassian.net/wiki'
 export CONFLUENCE_USER='your.email@company.com'
 export CONFLUENCE_API_TOKEN='your-confluence-api-token'
 export CONFLUENCE_SPACE_KEY='DEVOPS'
+
+# Jira Integration (Optional)
+export JIRA_URL='https://your-company.atlassian.net'
+export JIRA_USER='your.email@company.com'
+export JIRA_API_TOKEN='your-jira-api-token'
+export JIRA_PROJECT_KEYS='DEVOPS,INFRA,SRE'
 ```
 
-See **[CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md)** for detailed Confluence setup instructions.
+See **[CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md)** for Confluence setup.  
+See **[JIRA_INTEGRATION.md](JIRA_INTEGRATION.md)** for Jira setup.
 
 ### 3. Run the Bot
 ```bash
@@ -88,9 +96,42 @@ Add as many entries as needed for each category!
 
 **Draft saved at:** `drafts/{user_id}.json`
 
-## New Features (v4.0)
+## New Features (v4.1)
 
-### 💾 Draft Management (NEW!)
+### 🎫 Jira Integration (NEW!)
+Automatically fetch tickets from Jira and include in TRM reports!
+
+**Features:**
+- Fetches tickets from specified Jira projects
+- Filters by TRM date range (created OR updated)
+- Shows total count, breakdown by status/priority/type
+- Displays top 50 tickets with clickable links
+- Embedded directly in Confluence TRM report
+
+**Setup:**
+```bash
+export JIRA_URL='https://your-company.atlassian.net'
+export JIRA_USER='your.email@company.com'
+export JIRA_API_TOKEN='your-jira-api-token'
+export JIRA_PROJECT_KEYS='DEVOPS,INFRA,SRE'  # Comma-separated
+```
+
+**Output:**
+```
+Ticket Data
+• Total Tickets: 45
+• Date Range: Mar 2 to Mar 8
+• By Status: Open: 12 | In Progress: 15 | Closed: 18
+• By Priority: P1: 3 | P2: 15 | P3: 27
+• By Type: Bug: 18 | Task: 20 | Story: 7
+
+Ticket Details (Top 50)
+[Table with Key, Summary, Status, Priority, Type, Assignee]
+```
+
+See **[JIRA_INTEGRATION.md](JIRA_INTEGRATION.md)** for complete documentation.
+
+### 💾 Draft Management
 Never lose your work! Save drafts and continue later.
 
 **Auto-Save:**
@@ -270,7 +311,8 @@ See [CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md) for Confluence-specific troublesh
 
 - **[SETUP.md](SETUP.md)** - Initial setup instructions
 - **[CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md)** - Confluence integration guide
-- **[DRAFT_FEATURE.md](DRAFT_FEATURE.md)** - Draft management guide (NEW!)
+- **[JIRA_INTEGRATION.md](JIRA_INTEGRATION.md)** - Jira integration guide (NEW!)
+- **[DRAFT_FEATURE.md](DRAFT_FEATURE.md)** - Draft management guide
 - **[NEW_FEATURES.md](NEW_FEATURES.md)** - Custom themes & enhanced metrics guide
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture & flow
 - **[FINAL_SUMMARY.md](FINAL_SUMMARY.md)** - Complete implementation summary
@@ -282,6 +324,7 @@ See [CONFLUENCE_SETUP.md](CONFLUENCE_SETUP.md) for Confluence-specific troublesh
 Auto-TRM-Generator/
 ├── app.py                        # Main bot application
 ├── confluence_integration.py     # Confluence page creation
+├── jira_integration.py           # Jira ticket fetching (NEW!)
 ├── requirements.txt              # Python dependencies
 ├── env.example                   # Environment variable template
 ├── test_bot.py                   # Test suite
@@ -289,6 +332,7 @@ Auto-TRM-Generator/
 ├── drafts/                       # Draft storage (user_id.json)
 ├── SETUP.md                      # Setup guide
 ├── CONFLUENCE_SETUP.md           # Confluence setup
+├── JIRA_INTEGRATION.md           # Jira integration guide (NEW!)
 ├── DRAFT_FEATURE.md              # Draft management guide
 ├── NEW_FEATURES.md               # Latest features
 ├── ARCHITECTURE.md               # System architecture
@@ -315,8 +359,14 @@ Auto-TRM-Generator/
 - `handle_trm_category_selection_modal_submission()` - Final report generation + draft cleanup
 
 **confluence_integration.py:**
-- `create_trm_page()` - Creates Confluence page via REST API
+- `create_trm_page()` - Creates Confluence page via REST API (with ticket data)
 - `_build_confluence_content()` - Builds HTML content with tables and TOC
+- `_build_ticket_section()` - Builds Jira ticket section (NEW!)
+
+**jira_integration.py:** (NEW!)
+- `fetch_tickets()` - Fetches tickets from Jira for date range
+- `_process_tickets()` - Categorizes tickets by status/priority/type
+- `_empty_result()` - Returns empty structure when no tickets found
 
 ## Support
 
@@ -332,8 +382,8 @@ Internal tool for Swiggy DevOps team.
 
 ---
 
-**Version:** 4.0  
+**Version:** 4.1  
 **Last Updated:** March 6, 2026  
 **Default AI Model:** Claude Sonnet 4.5 (`pilot-poc/claude-sonnet-4-5`)  
 **Output:** Confluence Pages with Table of Contents  
-**New:** Draft Management with Auto-Save
+**New:** Draft Management with Auto-Save + Jira Ticket Integration

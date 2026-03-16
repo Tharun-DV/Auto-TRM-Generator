@@ -12,6 +12,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk.web.client import WebClient
 from dotenv import load_dotenv
 from confluence_integration import confluence
+from jira_integration import jira
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1674,8 +1675,30 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
 """
     
     try:
-        # Create Confluence page
-        confluence_url = confluence.create_trm_page(metadata, data)
+        # Fetch Jira tickets for the date range
+        ticket_data = None
+        if metadata.get('date_range'):
+            # Parse date range to get start and end dates
+            date_parts = metadata['date_range'].split(' to ')
+            if len(date_parts) == 2:
+                # Convert "Mar 2" to "2026-03-02" format
+                from datetime import datetime
+                current_year = datetime.now().year
+                try:
+                    start_date = datetime.strptime(f"{date_parts[0]} {current_year}", "%b %d %Y")
+                    end_date = datetime.strptime(f"{date_parts[1]} {current_year}", "%b %d %Y")
+                    
+                    # Format for Jira API (YYYY-MM-DD)
+                    start_date_str = start_date.strftime("%Y-%m-%d")
+                    end_date_str = end_date.strftime("%Y-%m-%d")
+                    
+                    print(f"🎫 Fetching tickets from {start_date_str} to {end_date_str}")
+                    ticket_data = jira.fetch_tickets(start_date_str, end_date_str)
+                except Exception as e:
+                    print(f"⚠️ Could not parse date range for ticket fetch: {e}")
+        
+        # Create Confluence page with ticket data
+        confluence_url = confluence.create_trm_page(metadata, data, ticket_data)
         
         if confluence_url:
             # Post success message with Confluence link
