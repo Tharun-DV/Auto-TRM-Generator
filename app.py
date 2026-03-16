@@ -7,15 +7,15 @@ import requests
 import dateparser
 import json
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk.web.client import WebClient
-from dotenv import load_dotenv
+
+load_dotenv()
+
 from confluence_integration import confluence
 from jira_integration import jira
-
-# Load environment variables from .env file
-load_dotenv()
 
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
@@ -368,7 +368,6 @@ Messages:
     }
     
     try:
-        # Disable SSL verification if requested (for corporate proxies)
         verify_ssl = os.environ.get("DISABLE_SSL_VERIFY") != "1"
         response = requests.post(
             "https://api.portkey.ai/v1/chat/completions",
@@ -382,6 +381,84 @@ Messages:
         return result["choices"][0]["message"]["content"]
     except Exception as e:
         return f"❌ Error generating TRM report: {str(e)}\n\nPlease check your Portkey API configuration and try again."
+
+
+def analyze_jira_tickets_with_ai(ticket_data: dict, start_date: str, end_date: str, week_num: int) -> dict:
+    tickets = ticket_data.get("tickets", [])
+    total = ticket_data.get("total", 0)
+    
+    if not tickets:
+        return {"issues": [], "metrics": [], "alerts": [], "outages": [], "action_items": []}
+    
+    tickets_text = "\n".join([
+        f"- {t['key']}: {t['summary']} [{t['status']}] [{t['priority']}] [{t['type']}]"
+        for t in tickets[:50]
+    ])
+    
+    prompt = f"""Analyze {total} Jira tickets for Week {week_num} ({start_date} to {end_date}).
+
+Extract issues, metrics, alerts, outages and action items from these tickets:
+
+{tickets_text}
+
+OUTPUT ONLY VALID JSON with this exact structure:
+{{
+  "issues": [{{"theme": "theme name", "description": "issue description"}}],
+  "metrics": [{{"metric_name": "name", "last_week": "0", "current_week": "count", "delta": ""}}],
+  "alerts": [{{"component": "component", "alert_name": "name", "frequency": "count", "description": "desc"}}],
+  "outages": [{{"outage_name": "name", "severity": "S1/S2/S3", "reason": "reason", "owner": "owner", "date": "date"}}],
+  "action_items": [{{"description": "desc", "owner": "owner", "eta": "eta"}}]
+}}
+
+Rules:
+- Extract real data from tickets - do not fabricate
+- Use empty arrays [] if nothing found
+- Themes: Compute, Database, Networking, Security, CI/CD, Monitoring, Storage, etc.
+- Only include issues that are actually mentioned in ticket summaries"""
+    
+    headers = {
+        "x-portkey-api-key": PORTKEY_API_KEY,
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": PORTKEY_MODEL,
+        "messages": [
+            {"role": "system", "content": "You analyze Jira tickets and extract structured DevOps data. Output only valid JSON."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    
+    try:
+        verify_ssl = os.environ.get("DISABLE_SSL_VERIFY") != "1"
+        response = requests.post(
+            "https://api.portkey.ai/v1/chat/completions",
+            json=body,
+            headers=headers,
+            timeout=60,
+            verify=verify_ssl
+        )
+        print(f"🔍 AI Response status: {response.status_code}")
+        print(f"🔍 AI Response text: {response.text[:500]}")
+        response.raise_for_status()
+        result = response.json()
+        ai_content = result["choices"][0]["message"]["content"]
+        
+        ai_content = ai_content.strip()
+        if ai_content.startswith("```"):
+            lines = ai_content.split("\n")
+            ai_content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        
+        ai_data = json.loads(ai_content)
+        return {
+            "issues": ai_data.get("issues", []),
+            "metrics": ai_data.get("metrics", []),
+            "alerts": ai_data.get("alerts", []),
+            "outages": ai_data.get("outages", []),
+            "action_items": ai_data.get("action_items", [])
+        }
+    except Exception as e:
+        print(f"⚠️ AI ticket analysis failed: {e}")
+        return {"issues": [], "metrics": [], "alerts": [], "outages": [], "action_items": []}
 
 
 @app.command("/trm")
@@ -1694,6 +1771,27 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
                     
                     print(f"🎫 Fetching tickets from {start_date_str} to {end_date_str}")
                     ticket_data = jira.fetch_tickets(start_date_str, end_date_str)
+                    
+                    if ticket_data and ticket_data.get("total", 0) > 0:
+                        week_num = int(metadata.get("week_number", 1))
+                        print(f"🤖 Analyzing tickets with AI...")
+                        ai_extracted = analyze_jira_tickets_with_ai(
+                            ticket_data, 
+                            metadata["date_range"].split(" to ")[0],
+                            metadata["date_range"].split(" to ")[1],
+                            week_num
+                        )
+                        if ai_extracted.get("issues"):
+                            data["issues"].extend(ai_extracted["issues"])
+                        if ai_extracted.get("metrics"):
+                            data["metrics"].extend(ai_extracted["metrics"])
+                        if ai_extracted.get("alerts"):
+                            data["alerts"].extend(ai_extracted["alerts"])
+                        if ai_extracted.get("outages"):
+                            data["outages"].extend(ai_extracted["outages"])
+                        if ai_extracted.get("action_items"):
+                            data["action_items"].extend(ai_extracted["action_items"])
+                        print(f"✅ Added {len(ai_extracted.get('issues', []))} issues from tickets")
                 except Exception as e:
                     print(f"⚠️ Could not parse date range for ticket fetch: {e}")
         
@@ -1730,16 +1828,12 @@ def handle_trm_category_selection_modal_submission(ack, body, client):
 
 @app.view("trm_modal")
 def handle_trm_modal_submission(ack, body, client, view):
-    """Handle TRM modal submission - generate and send report."""
-    # Extract the date range from the modal
     start_date_str = view["state"]["values"]["start_date_block"]["start_date_input"]["selected_date"]
     end_date_str = view["state"]["values"]["end_date_block"]["end_date_input"]["selected_date"]
     user_id = body["user"]["id"]
     
-    # Acknowledge the modal submission immediately
     ack()
     
-    # Validate input
     if not start_date_str or not end_date_str:
         client.chat_postMessage(
             channel=user_id,
@@ -1747,18 +1841,15 @@ def handle_trm_modal_submission(ack, body, client, view):
         )
         return
     
-    # Send acknowledgment message
     client.chat_postMessage(
         channel=user_id,
-        text=f"🔄 Generating TRM report for: *{start_date_str} to {end_date_str}*\n\nFetching messages from #devops-help..."
+        text=f"🔄 Generating TRM report for: *{start_date_str} to {end_date_str}*\n\n🎫 Fetching Jira tickets..."
     )
     
     try:
-        # Parse selected dates (format: YYYY-MM-DD)
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
         
-        # Validate date range
         if end_date < start_date:
             client.chat_postMessage(
                 channel=user_id,
@@ -1766,44 +1857,73 @@ def handle_trm_modal_submission(ack, body, client, view):
             )
             return
         
-        # Set timestamps to cover full days
-        start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        # Get Unix timestamps
-        oldest = start_date.timestamp()
-        latest = end_date.timestamp()
-        
-        # Format dates for display
         start_date_display = start_date.strftime("%b %d")
         end_date_display = end_date.strftime("%b %d")
         week_num = start_date.isocalendar()[1]
         
-        # Fetch messages from #devops-help
-        messages = fetch_slack_messages(client, DEVOPS_HELP_CHANNEL_ID, oldest, latest)
-        
-        if not messages:
+        if not jira.enabled:
             client.chat_postMessage(
                 channel=user_id,
-                text=f"⚠️ No messages found in #devops-help for the period: {start_date_display} to {end_date_display}"
+                text="❌ Jira is not configured. Please set JIRA_URL, JIRA_USER, JIRA_API_TOKEN, and JIRA_PROJECT_KEYS."
             )
             return
         
-        # Update user with message count
-        total_messages = len(messages)
+        ticket_data = jira.fetch_tickets(start_date_str, end_date_str)
+        
+        if not ticket_data or ticket_data.get("total", 0) == 0:
+            client.chat_postMessage(
+                channel=user_id,
+                text=f"⚠️ No Jira tickets found for: {start_date_display} to {end_date_display}"
+            )
+            return
+        
+        total_tickets = ticket_data.get("total", 0)
         client.chat_postMessage(
             channel=user_id,
-            text=f"✅ Found {total_messages} messages from #devops-help. Generating TRM report with AI..."
+            text=f"✅ Found {total_tickets} Jira tickets. Analyzing with AI..."
         )
         
-        # Generate TRM report using Portkey AI
-        trm_report = summarize_with_portkey(messages, start_date_display, end_date_display, week_num, total_messages)
+        ai_data = analyze_jira_tickets_with_ai(ticket_data, start_date_display, end_date_display, week_num)
         
-        # Post TRM report
-        client.chat_postMessage(
-            channel=user_id,
-            text=trm_report
-        )
+        metadata = {
+            "week_number": str(week_num),
+            "date_range": f"{start_date_display} to {end_date_display}",
+            "oncall": "AI-Generated",
+            "oncall_names": "AI-Generated"
+        }
+        
+        data = {
+            "issues": ai_data.get("issues", []),
+            "metrics": ai_data.get("metrics", []),
+            "alerts": ai_data.get("alerts", []),
+            "cost": [],
+            "outages": ai_data.get("outages", []),
+            "action_items": ai_data.get("action_items", [])
+        }
+        
+        client.chat_postMessage(channel=user_id, text="📄 Creating Confluence page...")
+        
+        confluence_url = confluence.create_trm_page(metadata, data, None)
+        
+        if confluence_url:
+            client.chat_postMessage(
+                channel=user_id,
+                text=(
+                    f"✅ TRM Report Created!\n\n"
+                    f"📄 *Confluence Page:* {confluence_url}\n\n"
+                    f"*Week {week_num} | {start_date_display} to {end_date_display}*\n"
+                    f"*Tickets Analyzed:* {total_tickets}\n"
+                    f"*Issues Found:* {len(data['issues'])}\n"
+                    f"*Alerts Found:* {len(data['alerts'])}\n"
+                    f"*Outages Found:* {len(data['outages'])}\n"
+                    f"*Action Items:* {len(data['action_items'])}"
+                )
+            )
+        else:
+            client.chat_postMessage(
+                channel=user_id,
+                text="⚠️ Confluence page creation failed. Please check your Confluence configuration."
+            )
         
     except Exception as e:
         client.chat_postMessage(

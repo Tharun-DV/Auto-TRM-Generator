@@ -50,10 +50,48 @@ class JiraIntegration:
         try:
             print(f"🎫 Fetching Jira tickets from {start_date} to {end_date}")
             print(f"🔍 Projects: {', '.join(self.jira_project_keys)}")
+            print(f"🔍 Jira URL: {self.jira_url}")
+            print(f"🔍 Jira User: {self.jira_user}")
             
-            # Build JQL query - search by created date only
-            project_filter = " OR ".join([f"project = {key}" for key in self.jira_project_keys])
-            jql = f"({project_filter}) AND created >= '{start_date}' AND created <= '{end_date}'"
+            # Test with simple JQL first (no date filter) to verify project key works
+            # Project keys might need quotes in JQL
+            project_filter = " OR ".join([f'project = "{key}"' for key in self.jira_project_keys])
+            
+            # Try simple query first
+            simple_jql = f'project = "{self.jira_project_keys[0]}" ORDER BY created DESC'
+            print(f"🔍 Testing simple JQL: {simple_jql}")
+            
+            url = f"{self.jira_url}/rest/api/3/search/jql"
+            payload = {
+                "jql": simple_jql,
+                "maxResults": 5,
+                "fields": ["key", "summary", "created", "updated"]
+            }
+            
+            response = requests.post(
+                url,
+                auth=(self.jira_user, self.jira_api_token),
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                test_tickets = result.get("issues", [])
+                print(f"🔍 Simple query result: {len(test_tickets)} tickets")
+                if test_tickets:
+                    for t in test_tickets:
+                        fields = t.get("fields", {})
+                        print(f"  - {t.get('key')}: created={fields.get('created')}, updated={fields.get('updated')}")
+            
+            # Build JQL query - search by created OR updated date (with proper parentheses for OR)
+            # Add 1 day to end_date to include the full end day
+            from datetime import datetime, timedelta
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            end_date_inclusive = end_date_obj.strftime("%Y-%m-%d")
+            
+            jql = f"({project_filter}) AND ((created >= '{start_date}' AND created < '{end_date_inclusive}') OR (updated >= '{start_date}' AND updated < '{end_date_inclusive}'))"
             
             print(f"🔍 JQL: {jql}")
             
@@ -74,11 +112,17 @@ class JiraIntegration:
                 timeout=30
             )
             
+            print(f"🔍 Response status: {response.status_code}")
+            
             if response.status_code == 200:
                 result = response.json()
                 tickets = result.get("issues", [])
                 
                 print(f"✅ Fetched {len(tickets)} tickets from Jira")
+                
+                # Debug: print first ticket if any
+                if tickets:
+                    print(f"🔍 First ticket: {tickets[0].get('key')}: {tickets[0].get('fields', {}).get('summary', '')[:50]}")
                 
                 # Process and categorize tickets
                 return self._process_tickets(tickets)

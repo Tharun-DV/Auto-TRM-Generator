@@ -236,28 +236,7 @@ class ConfluenceIntegration:
         return html_content
     
     def _build_ticket_section(self, ticket_data: Optional[Dict], date_range: str) -> str:
-        """Build Jira ticket section for Confluence - simple list format like TRM AI Tickets."""
-        if not ticket_data or ticket_data.get("total", 0) == 0:
-            return f"""
-<h2>TRM AI Tickets</h2>
-<p><em>No tickets found for date range: {date_range}</em></p>
-"""
-        
-        # Build simple ticket list - only ticket IDs
-        ticket_list = ""
-        for ticket in ticket_data.get("tickets", []):
-            # Create Jira ticket link
-            jira_url = os.environ.get("JIRA_URL", "")
-            ticket_key = ticket['key']
-            ticket_link = f"<a href='{jira_url}/browse/{ticket_key}'>{ticket_key}</a>" if jira_url else ticket_key
-            
-            # Build each ticket entry - only ID
-            ticket_list += f"<p>{ticket_link}</p>\n"
-        
-        return f"""
-<h2>TRM AI Tickets</h2>
-{ticket_list}
-"""
+        return ""
 
 
 # Global instance
